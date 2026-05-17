@@ -2,12 +2,13 @@
 //! orchestrator that resolves the message blob id then downloads its
 //! raw RFC 5322 bytes.
 
+use core::mem;
+
 use alloc::{
     string::{String, ToString},
     vec,
     vec::Vec,
 };
-use core::mem;
 
 use io_jmap::{
     rfc8620::{

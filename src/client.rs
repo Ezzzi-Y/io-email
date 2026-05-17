@@ -1,244 +1,147 @@
 //! # Standard, blocking unified email client
 //!
 //! Sum type over the per-backend std clients exposed by [`io-imap`],
-//! [`io-jmap`], [`io-maildir`] and [`io-smtp`]. After construction,
-//! callers see one type and one method set; backend dispatch happens
-//! once inside each method.
+//! [`io-jmap`], [`io-maildir`] and [`io-smtp`]. After construction, callers see
+//! one type and one method set; backend dispatch happens once inside each
+//! method.
 //!
-//! Construction stays asymmetric on purpose — every backend has its
-//! own `connect` / `new` story (URLs, TLS, sessions, paths) — so
-//! [`EmailClient`] is built from a fully-initialised per-backend
-//! client via the [`From`] impls below. For JMAP this means the
-//! caller must have already driven [`JmapClient::session_get`].
+//! Construction stays asymmetric on purpose: every backend has its own
+//! `connect` / `new` story (URLs, TLS, sessions, paths), so [`EmailClientStd`]
+//! is built from a fully-initialised per-backend client via the [`From`] impls
+//! living in each protocol's [`convert`](crate::imap::convert) module. The IMAP
+//! and SMTP variants carry a [`StreamStd`] transport directly: no boxing, no
+//! generic parameter, no light/full split. For JMAP this means the caller must
+//! have already driven [`JmapClientStd::session_get`].
 //!
-//! The shared method surface is intentionally narrow: only
-//! operations that have a meaningful translation across every
-//! enabled backend are exposed here, returning shared types from
-//! [`crate`] (e.g. [`Mailbox`], [`Envelope`]). Backend-specific
-//! operations stay on the inner client and remain reachable through
-//! the `as_<backend>_mut` escape hatches.
+//! The shared method surface is intentionally narrow: only operations that have
+//! a meaningful translation across every enabled backend are exposed here,
+//! returning shared types from [`crate`] (e.g.  [`Mailbox`],
+//! [`Envelope`]). Backend-specific operations stay on the inner client and
+//! remain reachable by pattern-matching the enum.
 //!
 //! [`io-imap`]: io_imap
 //! [`io-jmap`]: io_jmap
 //! [`io-maildir`]: io_maildir
 //! [`io-smtp`]: io_smtp
-//! [`JmapClient::session_get`]: io_jmap::client::JmapClient::session_get
+//! [`StreamStd`]: pimalaya_stream::std::stream::StreamStd
+//! [`JmapClientStd::session_get`]: io_jmap::client::JmapClientStd::session_get
 
-use alloc::vec::Vec;
+use alloc::{string::String, vec::Vec};
 
-#[cfg(feature = "imap")]
-use alloc::collections::BTreeMap;
-#[cfg(any(feature = "imap", feature = "jmap", feature = "maildir"))]
-use alloc::string::String;
-#[cfg(any(feature = "imap", feature = "jmap"))]
-use alloc::string::ToString;
-#[cfg(feature = "imap")]
-use core::num::NonZeroU32;
-
-#[cfg(feature = "imap")]
-use io_imap::{
-    client::{ImapClient, ImapClientError},
-    types::{
-        fetch::{MacroOrMessageDataItemNames, MessageDataItem, MessageDataItemName},
-        flag::{Flag as ImapFlag, StoreType},
-        mailbox::{ListMailbox, Mailbox as ImapMailbox},
-        sequence::SequenceSet,
-        status::{StatusDataItem, StatusDataItemName},
-    },
-};
-#[cfg(feature = "jmap")]
-use io_jmap::{
-    client::{JmapClient, JmapClientError},
-    rfc8621::{capabilities, email::EmailFilter, email_set::JmapEmailSetArgs},
-};
-#[cfg(feature = "maildir")]
-use io_maildir::{
-    client::{MaildirClient, MaildirClientError},
-    flag::{Flag as MdFlag, Flags as MdFlags},
-    maildir::Maildir,
-};
-#[cfg(feature = "smtp")]
-use io_smtp::client::{SmtpClient, SmtpClientError};
-#[cfg(any(feature = "imap", feature = "jmap", feature = "maildir"))]
 use log::trace;
+#[cfg(any(feature = "imap", feature = "smtp"))]
+use pimalaya_stream::std::stream::StreamStd;
 use thiserror::Error;
-#[cfg(feature = "jmap")]
-use url::Url;
 
-#[cfg(feature = "imap")]
-use crate::imap::envelope_list::{build_item_names, compute_window, envelope_from};
-#[cfg(feature = "jmap")]
-use crate::jmap::envelope_list::envelope_properties;
-#[cfg(feature = "jmap")]
-use crate::jmap::message_get::resolve_download_url;
-use crate::{envelope::Envelope, flag::Flag, mailbox::Mailbox};
+use crate::{
+    envelope::Envelope,
+    flag::{Flag, FlagOp},
+    mailbox::Mailbox,
+};
 
-/// Errors returned by [`EmailClient`].
+/// Errors returned by [`EmailClientStd`].
+///
+/// Backend-specific errors propagate transparently through the per-backend
+/// variants ([`Imap`](Self::Imap), [`Jmap`](Self::Jmap),
+/// [`Maildir`](Self::Maildir), [`Smtp`](Self::Smtp)). Everything else is a
+/// least-common-denominator reason any backend may surface, named without
+/// protocol prefix to match the shared input/output API.
 #[derive(Debug, Error)]
-pub enum EmailClientError {
+pub enum EmailClientStdError {
     #[cfg(feature = "imap")]
     #[error(transparent)]
-    Imap(#[from] ImapClientError),
+    Imap(#[from] io_imap::client::ImapClientStdError),
     #[cfg(feature = "jmap")]
     #[error(transparent)]
-    Jmap(#[from] JmapClientError),
+    Jmap(#[from] io_jmap::client::JmapClientStdError),
     #[cfg(feature = "maildir")]
     #[error(transparent)]
-    Maildir(#[from] MaildirClientError),
+    Maildir(#[from] io_maildir::client::MaildirClientError),
     #[cfg(feature = "smtp")]
     #[error(transparent)]
-    Smtp(#[from] SmtpClientError),
+    Smtp(#[from] io_smtp::client::SmtpClientStdError),
 
     #[error("operation not supported by the active backend")]
     UnsupportedOperation,
 
-    #[cfg(feature = "imap")]
-    #[error("invalid IMAP mailbox name `{0}`")]
-    InvalidImapMailbox(String),
-    #[cfg(feature = "imap")]
-    #[error("invalid IMAP UID `{0}` (expected non-zero u32)")]
-    InvalidImapUid(String),
-    #[cfg(feature = "imap")]
-    #[error("empty UID list — at least one id is required")]
-    EmptyImapUidList,
-    #[cfg(feature = "imap")]
-    #[error("invalid IMAP sequence-set window `{0}`")]
-    InvalidImapWindow(String),
-    #[cfg(feature = "imap")]
-    #[error("FETCH did not return any body for the requested message")]
-    ImapEmptyBody,
+    #[error("invalid mailbox `{0}`")]
+    InvalidMailbox(String),
+    #[error("invalid message id `{0}`")]
+    InvalidId(String),
+    #[error("invalid email address `{0}`")]
+    InvalidAddress(String),
+    #[error("invalid URL `{0}`")]
+    InvalidUrl(String),
+    #[error("invalid message content: {0}")]
+    InvalidMessageContent(String),
 
-    #[cfg(feature = "jmap")]
-    #[error("Email/get returned no email for the requested id")]
-    JmapEmailNotFound,
-    #[cfg(feature = "jmap")]
-    #[error("Email/get response did not include a blobId")]
-    JmapMissingBlobId,
-    #[cfg(feature = "jmap")]
-    #[error("resolved JMAP download URL is invalid: {0}")]
-    InvalidJmapDownloadUrl(String),
-    #[cfg(feature = "jmap")]
-    #[error("JMAP blob download was redirected; not yet supported")]
-    JmapUnsupportedRedirect,
-
-    #[cfg(feature = "maildir")]
-    #[error("invalid maildir at path `{0}`")]
-    InvalidMaildir(String),
+    #[error("mailbox `{0}` not found")]
+    MailboxNotFound(String),
+    #[error("message `{0}` not found")]
+    MessageNotFound(String),
+    #[error("no identity configured for `{0}`")]
+    IdentityNotFound(String),
+    #[error("empty message body")]
+    EmptyMessageBody,
+    #[error("missing required input `{0}`")]
+    MissingInput(&'static str),
+    #[error("operation `{0}` failed")]
+    OperationFailed(&'static str),
 }
 
-/// Std-blocking unified email client wrapping any one of the
-/// per-backend clients.
-#[allow(clippy::large_enum_variant)]
-pub enum EmailClient {
+/// Std-blocking unified email client wrapping any one of the per-backend
+/// clients.
+#[derive(Debug)]
+pub enum EmailClientStd {
     #[cfg(feature = "imap")]
-    Imap(ImapClient),
+    Imap(io_imap::client::ImapClientStd<StreamStd>),
     #[cfg(feature = "jmap")]
-    Jmap(JmapClient),
+    Jmap(io_jmap::client::JmapClientStd),
     #[cfg(feature = "maildir")]
-    Maildir(MaildirClient),
+    Maildir(io_maildir::client::MaildirClient),
     #[cfg(feature = "smtp")]
-    Smtp(SmtpClient),
+    Smtp(io_smtp::client::SmtpClientStd<StreamStd>),
 }
 
-impl EmailClient {
-    /// Returns the inner [`ImapClient`] when the active variant is
-    /// [`EmailClient::Imap`], for backend-specific operations not
-    /// exposed on the unified surface.
-    #[cfg(feature = "imap")]
-    pub fn as_imap_mut(&mut self) -> Option<&mut ImapClient> {
-        match self {
-            Self::Imap(c) => Some(c),
-            #[allow(unreachable_patterns)]
-            _ => None,
-        }
-    }
-
-    /// Returns the inner [`JmapClient`] when the active variant is
-    /// [`EmailClient::Jmap`].
-    #[cfg(feature = "jmap")]
-    pub fn as_jmap_mut(&mut self) -> Option<&mut JmapClient> {
-        match self {
-            Self::Jmap(c) => Some(c),
-            #[allow(unreachable_patterns)]
-            _ => None,
-        }
-    }
-
-    /// Returns the inner [`MaildirClient`] when the active variant is
-    /// [`EmailClient::Maildir`].
-    #[cfg(feature = "maildir")]
-    pub fn as_maildir_mut(&mut self) -> Option<&mut MaildirClient> {
-        match self {
-            Self::Maildir(c) => Some(c),
-            #[allow(unreachable_patterns)]
-            _ => None,
-        }
-    }
-
-    /// Returns the inner [`SmtpClient`] when the active variant is
-    /// [`EmailClient::Smtp`].
-    #[cfg(feature = "smtp")]
-    pub fn as_smtp_mut(&mut self) -> Option<&mut SmtpClient> {
-        match self {
-            Self::Smtp(c) => Some(c),
-            #[allow(unreachable_patterns)]
-            _ => None,
-        }
-    }
-
-    /// Lists every mailbox visible to the active backend, projected
-    /// into the shared [`Mailbox`] type.
+impl EmailClientStd {
+    /// Lists every mailbox available to the active account.
     ///
     /// When `with_counts` is `true`, [`Mailbox::total`] and
-    /// [`Mailbox::unread`] are populated for backends that support
-    /// counts. JMAP populates them unconditionally (free in the same
-    /// `Mailbox/get` response). IMAP issues an extra `STATUS` per
-    /// mailbox. Maildir does not implement counts yet and leaves both
-    /// as `None`.
-    ///
-    /// - **IMAP**: issues `LIST "" "*"`, then `STATUS <mbox>
-    ///   (MESSAGES UNSEEN)` per mailbox when `with_counts` is set.
-    /// - **JMAP**: issues batched `Mailbox/query` + `Mailbox/get`
-    ///   with no filter, sort or paging. The caller must have
-    ///   already driven [`JmapClient::session_get`].
-    /// - **Maildir**: enumerates every valid Maildir under the
-    ///   client's root path. Counts are not implemented.
-    /// - **SMTP**: returns
-    ///   [`EmailClientError::UnsupportedOperation`].
-    ///
-    /// [`JmapClient::session_get`]: io_jmap::client::JmapClient::session_get
-    #[cfg_attr(
-        not(any(feature = "imap", feature = "jmap", feature = "maildir")),
-        allow(unused_variables)
-    )]
-    pub fn list_mailboxes(&mut self, with_counts: bool) -> Result<Vec<Mailbox>, EmailClientError> {
+    /// [`Mailbox::unread`] are populated when the backend supports them;
+    /// otherwise they are left as `None`. Backends that surface counts
+    /// for free always populate the fields regardless of the flag.
+    pub fn list_mailboxes(
+        &mut self,
+        with_counts: bool,
+    ) -> Result<Vec<Mailbox>, EmailClientStdError> {
+        trace!("list mailboxes with {self:?}");
+
         match self {
-            #[cfg(not(any(
-                feature = "imap",
-                feature = "jmap",
-                feature = "maildir",
-                feature = "smtp"
-            )))]
-            _ => Err(EmailClientError::UnsupportedOperation),
             #[cfg(feature = "imap")]
             Self::Imap(client) => {
-                trace!("EmailClient::list_mailboxes via IMAP (counts={with_counts})");
-                // SAFETY: "" and "*" are always valid IMAP mailbox
-                // tokens.
-                let reference: ImapMailbox<'static> = "".try_into().unwrap();
-                let pattern: ListMailbox<'static> = "*".try_into().unwrap();
-                let listing = client.list(reference, pattern)?;
-                let mut mailboxes: Vec<Mailbox> = listing.into_iter().map(Mailbox::from).collect();
+                use io_imap::types::{
+                    mailbox::Mailbox as ImapMailbox,
+                    status::{StatusDataItem, StatusDataItemName},
+                };
+
+                let mut mailboxes: Vec<_> = client
+                    .list("".try_into().unwrap(), "*".try_into().unwrap())?
+                    .into_iter()
+                    .map(Mailbox::from)
+                    .collect();
 
                 if with_counts {
                     let items: Vec<StatusDataItemName> =
                         vec![StatusDataItemName::Messages, StatusDataItemName::Unseen];
+
                     for mailbox in &mut mailboxes {
                         let mbox: ImapMailbox<'static> =
                             mailbox.id.clone().try_into().map_err(|_| {
-                                EmailClientError::InvalidImapMailbox(mailbox.id.clone())
+                                EmailClientStdError::InvalidMailbox(mailbox.id.clone())
                             })?;
+
                         let data = client.status(mbox, items.clone())?;
+
                         for item in data {
                             match item {
                                 StatusDataItem::Messages(n) => {
@@ -257,75 +160,50 @@ impl EmailClient {
             }
             #[cfg(feature = "jmap")]
             Self::Jmap(client) => {
-                trace!("EmailClient::list_mailboxes via JMAP");
-                // JMAP populates total/unread unconditionally — they
-                // ride on the same Mailbox/get response, so
-                // with_counts is irrelevant here.
-                let _ = with_counts;
                 let output = client.mailbox_query(None, None, None, None, None)?;
                 Ok(output.mailboxes.into_iter().map(Mailbox::from).collect())
             }
             #[cfg(feature = "maildir")]
             Self::Maildir(client) => {
-                trace!("EmailClient::list_mailboxes via Maildir");
-                // Maildir counts would require enumerating each
-                // maildir's cur/+new/ entries and parsing flag
-                // suffixes; not implemented yet.
-                let _ = with_counts;
                 let maildirs = client.list_maildirs()?;
-                let mut mailboxes: Vec<Mailbox> = maildirs.into_iter().map(Mailbox::from).collect();
+                let mut mailboxes: Vec<_> = maildirs.into_iter().map(Mailbox::from).collect();
                 mailboxes.sort_by(|a, b| a.name.cmp(&b.name));
                 Ok(mailboxes)
             }
             #[cfg(feature = "smtp")]
-            Self::Smtp(_) => Err(EmailClientError::UnsupportedOperation),
+            Self::Smtp(_) => Err(EmailClientStdError::UnsupportedOperation),
         }
     }
 
-    /// Lists envelopes from the given mailbox, projected into the
-    /// shared [`Envelope`] type. Pagination is 1-indexed; page 1 is
-    /// the most recent window.
+    /// Lists envelopes from the given mailbox, sorted by date
+    /// descending (most recent first).
     ///
-    /// When `with_attachment` is set, each envelope's
-    /// [`Envelope::has_attachment`] is populated. JMAP returns the
-    /// flag for free (it always rides on `Email/get`); IMAP issues an
-    /// additional `BODYSTRUCTURE` fetch item; Maildir already parses
-    /// the message body for subject/from/to so the toggle is a no-op
-    /// there.
-    ///
-    /// - **IMAP**: `SELECT <mailbox>` + `FETCH UID FLAGS ENVELOPE
-    ///   RFC822.SIZE [BODYSTRUCTURE]` over a sequence-set window
-    ///   computed from `EXISTS`.
-    /// - **JMAP**: batched `Email/query` + `Email/get`. The
-    ///   `mailbox` argument is the JMAP mailbox id; pass an empty
-    ///   string to query the whole account.
-    /// - **Maildir**: lists every message in `<root>/<mailbox>`,
-    ///   sorts by date descending, then slices the requested page.
-    /// - **SMTP**: returns
-    ///   [`EmailClientError::UnsupportedOperation`].
-    #[cfg_attr(
-        not(any(feature = "imap", feature = "jmap", feature = "maildir")),
-        allow(unused_variables)
-    )]
+    /// `mailbox` is the backend-specific mailbox identifier (name or
+    /// id). `page` is 1-indexed; pass `None` to default to page 1.
+    /// `page_size = None` returns the full window. When
+    /// `with_attachment` is set, [`Envelope::has_attachment`] is
+    /// populated when the backend reports it (otherwise left as
+    /// `None`).
     pub fn list_envelopes(
         &mut self,
         mailbox: &str,
         page: Option<u32>,
         page_size: Option<u32>,
         with_attachment: bool,
-    ) -> Result<Vec<Envelope>, EmailClientError> {
+    ) -> Result<Vec<Envelope>, EmailClientStdError> {
+        trace!("list envelopes with {self:?}");
+
         match self {
-            #[cfg(not(any(
-                feature = "imap",
-                feature = "jmap",
-                feature = "maildir",
-                feature = "smtp"
-            )))]
-            _ => Err(EmailClientError::UnsupportedOperation),
             #[cfg(feature = "imap")]
             Self::Imap(client) => {
-                trace!("EmailClient::list_envelopes via IMAP (attachments={with_attachment})");
-                let mbox = parse_imap_mailbox(mailbox)?;
+                use io_imap::types::{core::Vec1, fetch::MessageDataItem, sequence::SequenceSet};
+
+                use crate::imap::{
+                    convert::parse_mailbox,
+                    envelope_list::{build_item_names, compute_window, envelope_from},
+                };
+
+                let mbox = parse_mailbox(mailbox)?;
                 let select = client.select(mbox)?;
                 let exists = select.exists.unwrap_or(0);
 
@@ -336,18 +214,29 @@ impl EmailClient {
                 let sequence_set: SequenceSet = window
                     .as_str()
                     .try_into()
-                    .map_err(|_| EmailClientError::InvalidImapWindow(window.clone()))?;
+                    .expect("compute_window produced a valid sequence set");
 
                 let item_names = build_item_names(with_attachment);
-
                 let data = client.fetch(sequence_set, item_names, false)?;
-                Ok(envelopes_from_fetch(data))
+
+                let envelopes: Vec<_> = data
+                    .into_iter()
+                    .rev()
+                    .map(|(seq, items): (_, Vec1<MessageDataItem<'static>>)| {
+                        envelope_from(seq.get(), items.into_inner())
+                    })
+                    .collect();
+
+                Ok(envelopes)
             }
             #[cfg(feature = "jmap")]
             Self::Jmap(client) => {
-                trace!("EmailClient::list_envelopes via JMAP");
-                let _ = with_attachment; // JMAP populates always.
-                let (position, limit) = compute_jmap_position_limit(page, page_size);
+                use crate::jmap::{
+                    convert::{compute_position_limit, mailbox_filter},
+                    envelope_list::envelope_properties,
+                };
+
+                let (position, limit) = compute_position_limit(page, page_size);
                 let filter = mailbox_filter(mailbox);
                 let output = client.email_query(
                     filter,
@@ -356,108 +245,105 @@ impl EmailClient {
                     limit,
                     Some(envelope_properties()),
                 )?;
+
                 Ok(output.emails.into_iter().map(Envelope::from).collect())
             }
             #[cfg(feature = "maildir")]
             Self::Maildir(client) => {
-                trace!("EmailClient::list_envelopes via Maildir");
-                let _ = with_attachment; // Maildir parses unconditionally.
+                use crate::maildir::convert::{open_maildir, paginate};
+
                 let maildir = open_maildir(client, mailbox)?;
                 let messages = client.list_messages(maildir)?;
-                let mut envelopes: Vec<Envelope> =
-                    messages.into_iter().map(Envelope::from).collect();
+
+                let mut envelopes: Vec<_> = messages.into_iter().map(Envelope::from).collect();
                 envelopes.sort_by(|a, b| b.date.cmp(&a.date));
+
                 Ok(paginate(envelopes, page, page_size))
             }
             #[cfg(feature = "smtp")]
-            Self::Smtp(_) => Err(EmailClientError::UnsupportedOperation),
+            Self::Smtp(_) => Err(EmailClientStdError::UnsupportedOperation),
         }
     }
 
-    /// Adds the given flags to the listed messages.
-    ///
-    /// - **IMAP**: `SELECT <mailbox>` + `UID STORE +FLAGS`. Ids are
-    ///   parsed as IMAP UIDs.
-    /// - **JMAP**: `Email/set` with `keywords/<keyword>: true`
-    ///   patches. The `mailbox` argument is unused.
-    /// - **Maildir**: drives `MaildirFlagsAdd` once per id.
-    /// - **SMTP**: returns
-    ///   [`EmailClientError::UnsupportedOperation`].
+    /// Adds the given flags to every message in `ids` inside
+    /// `mailbox`, preserving any flags already set. `ids` is a slice
+    /// of backend-specific message identifiers.
     pub fn add_flags(
         &mut self,
         mailbox: &str,
         ids: &[&str],
         flags: &[Flag],
-    ) -> Result<(), EmailClientError> {
+    ) -> Result<(), EmailClientStdError> {
         self.store_flags(mailbox, ids, flags, FlagOp::Add)
     }
 
-    /// Replaces the flags of the listed messages with the given set.
-    /// Same backend semantics as [`add_flags`](Self::add_flags) but
-    /// uses the protocol's set/replace primitive.
+    /// Replaces the flag set of every message in `ids` inside
+    /// `mailbox` with `flags` exactly. Any prior flag not in `flags`
+    /// is removed.
     pub fn set_flags(
         &mut self,
         mailbox: &str,
         ids: &[&str],
         flags: &[Flag],
-    ) -> Result<(), EmailClientError> {
+    ) -> Result<(), EmailClientStdError> {
         self.store_flags(mailbox, ids, flags, FlagOp::Set)
     }
 
-    /// Removes the given flags from the listed messages.
-    /// Same backend semantics as [`add_flags`](Self::add_flags) but
-    /// uses the protocol's remove primitive.
+    /// Removes the given flags from every message in `ids` inside
+    /// `mailbox`. Flags not present on a message are silently skipped.
     pub fn delete_flags(
         &mut self,
         mailbox: &str,
         ids: &[&str],
         flags: &[Flag],
-    ) -> Result<(), EmailClientError> {
+    ) -> Result<(), EmailClientStdError> {
         self.store_flags(mailbox, ids, flags, FlagOp::Remove)
     }
 
-    #[cfg_attr(
-        not(any(feature = "imap", feature = "jmap", feature = "maildir")),
-        allow(unused_variables)
-    )]
     fn store_flags(
         &mut self,
         mailbox: &str,
         ids: &[&str],
         flags: &[Flag],
         op: FlagOp,
-    ) -> Result<(), EmailClientError> {
+    ) -> Result<(), EmailClientStdError> {
+        trace!("store flags ({op:?}) with {self:?}");
+
         match self {
-            #[cfg(not(any(
-                feature = "imap",
-                feature = "jmap",
-                feature = "maildir",
-                feature = "smtp"
-            )))]
-            _ => Err(EmailClientError::UnsupportedOperation),
             #[cfg(feature = "imap")]
             Self::Imap(client) => {
-                trace!("EmailClient::store_flags via IMAP ({op:?})");
-                let mbox = parse_imap_mailbox(mailbox)?;
+                use io_imap::types::flag::StoreType;
+
+                use crate::imap::convert::{flag_from, parse_mailbox, parse_uids};
+
+                let mbox = parse_mailbox(mailbox)?;
                 let _ = client.select(mbox)?;
-                let sequence_set = parse_imap_uids(ids)?;
-                let imap_flags: Vec<ImapFlag<'static>> = flags.iter().map(imap_flag_from).collect();
+
+                let sequence_set = parse_uids(ids)?;
+                let imap_flags: Vec<_> = flags.iter().map(flag_from).collect();
                 let kind = match op {
                     FlagOp::Add => StoreType::Add,
                     FlagOp::Set => StoreType::Replace,
                     FlagOp::Remove => StoreType::Remove,
                 };
+
                 let _ = client.store(sequence_set, kind, imap_flags, true)?;
+
                 Ok(())
             }
             #[cfg(feature = "jmap")]
             Self::Jmap(client) => {
-                trace!("EmailClient::store_flags via JMAP ({op:?})");
-                let _ = mailbox; // JMAP keywords are global per email.
+                use alloc::string::ToString;
+
+                use io_jmap::rfc8621::email_set::JmapEmailSetArgs;
+
+                use crate::jmap::convert::keyword_from;
+
                 let mut args = JmapEmailSetArgs::default();
+
                 for id in ids {
                     for flag in flags {
-                        let keyword = jmap_keyword_from(flag);
+                        let keyword = keyword_from(flag);
                         match op {
                             FlagOp::Add | FlagOp::Set => {
                                 args.set_keyword(id.to_string(), keyword);
@@ -468,14 +354,20 @@ impl EmailClient {
                         }
                     }
                 }
+
                 let _ = client.email_set(args)?;
+
                 Ok(())
             }
             #[cfg(feature = "maildir")]
             Self::Maildir(client) => {
-                trace!("EmailClient::store_flags via Maildir ({op:?})");
+                use io_maildir::flag::Flags as MdFlags;
+
+                use crate::maildir::convert::{flag_from, open_maildir};
+
                 let maildir = open_maildir(client, mailbox)?;
-                let md_flags: MdFlags = flags.iter().map(maildir_flag_from).collect();
+                let md_flags: MdFlags = flags.iter().map(flag_from).collect();
+
                 for id in ids {
                     match op {
                         FlagOp::Add => {
@@ -489,40 +381,35 @@ impl EmailClient {
                         }
                     }
                 }
+
                 Ok(())
             }
             #[cfg(feature = "smtp")]
-            Self::Smtp(_) => Err(EmailClientError::UnsupportedOperation),
+            Self::Smtp(_) => Err(EmailClientStdError::UnsupportedOperation),
         }
     }
 
-    /// Fetches the raw RFC 5322 bytes of a single message.
+    /// Fetches the raw RFC 5322 bytes of message `id` from `mailbox`.
     ///
-    /// - **IMAP**: `SELECT <mailbox>` + `UID FETCH <id> BODY.PEEK[]`.
-    /// - **JMAP**: `Email/get` (asking for `blobId`) +
-    ///   `Blob/download`. The `mailbox` argument is unused.
-    /// - **Maildir**: reads the on-disk message file.
-    /// - **SMTP**: returns
-    ///   [`EmailClientError::UnsupportedOperation`].
-    #[cfg_attr(
-        not(any(feature = "imap", feature = "jmap", feature = "maildir")),
-        allow(unused_variables)
-    )]
-    pub fn get_message(&mut self, mailbox: &str, id: &str) -> Result<Vec<u8>, EmailClientError> {
+    /// `mailbox` may be ignored by backends whose ids are globally
+    /// scoped. Returns the message body as-is, with no modification
+    /// to the seen/read state.
+    pub fn get_message(&mut self, mailbox: &str, id: &str) -> Result<Vec<u8>, EmailClientStdError> {
+        trace!("get message with {self:?}");
+
         match self {
-            #[cfg(not(any(
-                feature = "imap",
-                feature = "jmap",
-                feature = "maildir",
-                feature = "smtp"
-            )))]
-            _ => Err(EmailClientError::UnsupportedOperation),
             #[cfg(feature = "imap")]
             Self::Imap(client) => {
-                trace!("EmailClient::get_message via IMAP");
-                let mbox = parse_imap_mailbox(mailbox)?;
+                use io_imap::types::fetch::{
+                    MacroOrMessageDataItemNames, MessageDataItem, MessageDataItemName,
+                };
+
+                use crate::imap::convert::{parse_mailbox, parse_uids};
+
+                let mbox = parse_mailbox(mailbox)?;
                 let _ = client.select(mbox)?;
-                let sequence_set = parse_imap_uids(&[id])?;
+
+                let sequence_set = parse_uids(&[id])?;
                 let item_names = MacroOrMessageDataItemNames::MessageDataItemNames(vec![
                     MessageDataItemName::BodyExt {
                         section: None,
@@ -530,9 +417,10 @@ impl EmailClient {
                         peek: true,
                     },
                 ]);
+
                 let data = client.fetch(sequence_set, item_names, true)?;
-                let bytes = data
-                    .into_values()
+
+                data.into_values()
                     .flat_map(|items| items.into_inner().into_iter())
                     .find_map(|item| match item {
                         MessageDataItem::BodyExt { data, .. } => {
@@ -540,17 +428,22 @@ impl EmailClient {
                         }
                         _ => None,
                     })
-                    .ok_or(EmailClientError::ImapEmptyBody)?;
-                Ok(bytes)
+                    .ok_or(EmailClientStdError::EmptyMessageBody)
             }
             #[cfg(feature = "jmap")]
             Self::Jmap(client) => {
-                trace!("EmailClient::get_message via JMAP");
-                let _ = mailbox;
+                use alloc::string::ToString;
+
+                use io_jmap::{client::JmapClientStdError, rfc8621::capabilities};
+                use url::Url;
+
+                use crate::jmap::message_get::resolve_download_url;
+
                 let session = client
                     .session()
-                    .ok_or(JmapClientError::MissingSession)?
+                    .ok_or(JmapClientStdError::MissingSession)?
                     .clone();
+
                 let output = client.email_get(
                     vec![id.to_string()],
                     Some(vec!["blobId".into()]),
@@ -558,188 +451,444 @@ impl EmailClient {
                     false,
                     0,
                 )?;
+
                 let email = output
                     .emails
                     .into_iter()
                     .next()
-                    .ok_or(EmailClientError::JmapEmailNotFound)?;
-                let blob_id = email.blob_id.ok_or(EmailClientError::JmapMissingBlobId)?;
+                    .ok_or_else(|| EmailClientStdError::MessageNotFound(id.to_string()))?;
+                let blob_id = email
+                    .blob_id
+                    .ok_or(EmailClientStdError::OperationFailed("retrieve blob id"))?;
+
                 let account_id = session
                     .primary_accounts
                     .get(capabilities::MAIL)
                     .cloned()
                     .unwrap_or_default();
                 let url_str = resolve_download_url(&session.download_url, &account_id, &blob_id);
-                let url = Url::parse(&url_str)
-                    .map_err(|_| EmailClientError::InvalidJmapDownloadUrl(url_str))?;
+                let url =
+                    Url::parse(&url_str).map_err(|_| EmailClientStdError::InvalidUrl(url_str))?;
+
                 Ok(client.blob_download(&url)?)
             }
             #[cfg(feature = "maildir")]
             Self::Maildir(client) => {
-                trace!("EmailClient::get_message via Maildir");
+                use crate::maildir::convert::open_maildir;
+
                 let maildir = open_maildir(client, mailbox)?;
                 let message = client.get(maildir, id)?;
+
                 Ok(message.into())
             }
             #[cfg(feature = "smtp")]
-            Self::Smtp(_) => Err(EmailClientError::UnsupportedOperation),
+            Self::Smtp(_) => Err(EmailClientStdError::UnsupportedOperation),
         }
     }
-}
 
-#[derive(Clone, Copy, Debug)]
-#[allow(dead_code)]
-enum FlagOp {
-    Add,
-    Set,
-    Remove,
-}
+    /// Appends a raw RFC 5322 message to `mailbox`, tagged with the
+    /// given `flags`. `raw` must be a syntactically valid RFC 5322
+    /// message; framing-level escaping is handled by the backend.
+    pub fn add_message(
+        &mut self,
+        mailbox: &str,
+        flags: &[Flag],
+        raw: Vec<u8>,
+    ) -> Result<(), EmailClientStdError> {
+        trace!("add message with {self:?}");
 
-#[cfg(feature = "imap")]
-fn parse_imap_mailbox(name: &str) -> Result<ImapMailbox<'static>, EmailClientError> {
-    String::from(name)
-        .try_into()
-        .map_err(|_| EmailClientError::InvalidImapMailbox(name.to_string()))
-}
+        match self {
+            #[cfg(feature = "imap")]
+            Self::Imap(client) => {
+                use alloc::string::ToString;
 
-#[cfg(feature = "imap")]
-fn parse_imap_uids(ids: &[&str]) -> Result<SequenceSet, EmailClientError> {
-    if ids.is_empty() {
-        return Err(EmailClientError::EmptyImapUidList);
+                use io_imap::types::{core::Literal, extensions::binary::LiteralOrLiteral8};
+
+                use crate::imap::convert::{flag_from, parse_mailbox};
+
+                let mbox = parse_mailbox(mailbox)?;
+                let imap_flags: Vec<_> = flags.iter().map(flag_from).collect();
+                let literal = Literal::try_from(raw)
+                    .map_err(|e| EmailClientStdError::InvalidMessageContent(e.to_string()))?;
+                let message = LiteralOrLiteral8::Literal(literal);
+
+                let _ = client.append(mbox, imap_flags, None, message)?;
+
+                Ok(())
+            }
+            #[cfg(feature = "jmap")]
+            Self::Jmap(client) => {
+                use alloc::{collections::BTreeMap, string::ToString};
+
+                use io_jmap::{
+                    client::JmapClientStdError,
+                    rfc8621::{capabilities, email::EmailImport},
+                };
+                use url::Url;
+
+                use crate::jmap::convert::keyword_from;
+
+                let session = client
+                    .session()
+                    .ok_or(JmapClientStdError::MissingSession)?
+                    .clone();
+                let account_id = session
+                    .primary_accounts
+                    .get(capabilities::MAIL)
+                    .cloned()
+                    .unwrap_or_default();
+                let upload_url_str = session.upload_url.replace("{accountId}", &account_id);
+                let upload_url = Url::parse(&upload_url_str)
+                    .map_err(|_| EmailClientStdError::InvalidUrl(upload_url_str))?;
+                let blob = client.blob_upload(&upload_url, "message/rfc822", raw)?;
+
+                let mq = client.mailbox_query(None, None, None, None, None)?;
+                let mailbox_id = mq
+                    .mailboxes
+                    .iter()
+                    .find(|m| m.name.as_deref() == Some(mailbox))
+                    .and_then(|m| m.id.clone())
+                    .ok_or_else(|| EmailClientStdError::MailboxNotFound(mailbox.to_string()))?;
+
+                let mut mailbox_ids = BTreeMap::new();
+                mailbox_ids.insert(mailbox_id, true);
+
+                let keywords = if flags.is_empty() {
+                    None
+                } else {
+                    Some(flags.iter().map(|f| (keyword_from(f), true)).collect())
+                };
+
+                let mut emails = BTreeMap::new();
+                emails.insert(
+                    "new".to_string(),
+                    EmailImport {
+                        blob_id: blob.blob_id,
+                        mailbox_ids,
+                        keywords,
+                        received_at: None,
+                    },
+                );
+
+                let output = client.email_import(emails)?;
+                if !output.not_created.is_empty() || output.created.is_empty() {
+                    return Err(EmailClientStdError::OperationFailed("import"));
+                }
+
+                Ok(())
+            }
+            #[cfg(feature = "maildir")]
+            Self::Maildir(client) => {
+                use io_maildir::{flag::Flags as MdFlags, maildir::MaildirSubdir};
+
+                use crate::maildir::convert::{flag_from, open_maildir};
+
+                let maildir = open_maildir(client, mailbox)?;
+                let md_flags: MdFlags = flags.iter().map(flag_from).collect();
+
+                let _ = client.store(maildir, MaildirSubdir::Cur, md_flags, raw)?;
+
+                Ok(())
+            }
+            #[cfg(feature = "smtp")]
+            Self::Smtp(_) => Err(EmailClientStdError::UnsupportedOperation),
+        }
     }
 
-    let uids: Vec<NonZeroU32> = ids
-        .iter()
-        .map(|s| {
-            s.parse::<NonZeroU32>()
-                .map_err(|_| EmailClientError::InvalidImapUid((*s).to_string()))
-        })
-        .collect::<Result<_, _>>()?;
+    /// Copies every message in `ids` from mailbox `from` to mailbox
+    /// `to`, leaving the originals in place.
+    pub fn copy_messages(
+        &mut self,
+        from: &str,
+        to: &str,
+        ids: &[&str],
+    ) -> Result<(), EmailClientStdError> {
+        trace!("copy messages with {self:?}");
 
-    SequenceSet::try_from(uids).map_err(|_| EmailClientError::EmptyImapUidList)
-}
+        match self {
+            #[cfg(feature = "imap")]
+            Self::Imap(client) => {
+                use crate::imap::convert::{parse_mailbox, parse_uids};
 
-#[cfg(feature = "imap")]
-fn imap_flag_from(flag: &Flag) -> ImapFlag<'static> {
-    match flag {
-        Flag::Seen => ImapFlag::Seen,
-        Flag::Answered => ImapFlag::Answered,
-        Flag::Flagged => ImapFlag::Flagged,
-        Flag::Draft => ImapFlag::Draft,
-    }
-}
+                let src = parse_mailbox(from)?;
+                let dst = parse_mailbox(to)?;
+                let _ = client.select(src)?;
 
-#[cfg(feature = "imap")]
-fn envelopes_from_fetch(
-    data: BTreeMap<NonZeroU32, io_imap::types::core::Vec1<MessageDataItem<'static>>>,
-) -> Vec<Envelope> {
-    data.into_iter()
-        .rev()
-        .map(|(seq, items)| envelope_from(seq.get(), items.into_inner()))
-        .collect()
-}
+                let sequence_set = parse_uids(ids)?;
+                let _ = client.copy(sequence_set, dst, true)?;
 
-#[cfg(feature = "jmap")]
-fn jmap_keyword_from(flag: &Flag) -> String {
-    match flag {
-        Flag::Seen => "$seen".into(),
-        Flag::Answered => "$answered".into(),
-        Flag::Flagged => "$flagged".into(),
-        Flag::Draft => "$draft".into(),
-    }
-}
+                Ok(())
+            }
+            #[cfg(feature = "jmap")]
+            Self::Jmap(client) => {
+                use alloc::string::ToString;
 
-#[cfg(feature = "jmap")]
-fn mailbox_filter(mailbox: &str) -> Option<EmailFilter> {
-    if mailbox.is_empty() {
-        return None;
-    }
-    Some(EmailFilter {
-        in_mailbox: Some(mailbox.to_string()),
-        ..EmailFilter::default()
-    })
-}
+                use io_jmap::rfc8621::email_set::JmapEmailSetArgs;
 
-#[cfg(feature = "jmap")]
-fn compute_jmap_position_limit(
-    page: Option<u32>,
-    page_size: Option<u32>,
-) -> (Option<u64>, Option<u64>) {
-    let Some(size) = page_size else {
-        return (None, None);
-    };
+                let mq = client.mailbox_query(None, None, None, None, None)?;
+                let dst_id = mq
+                    .mailboxes
+                    .iter()
+                    .find(|m| m.name.as_deref() == Some(to))
+                    .and_then(|m| m.id.clone())
+                    .ok_or_else(|| EmailClientStdError::MailboxNotFound(to.to_string()))?;
 
-    let page = page.unwrap_or(1).max(1);
-    let position = ((page - 1) as u64).saturating_mul(size as u64);
+                let mut args = JmapEmailSetArgs::default();
+                for id in ids {
+                    args.add_to_mailbox(id.to_string(), dst_id.clone());
+                }
 
-    (Some(position), Some(size as u64))
-}
+                let _ = client.email_set(args)?;
 
-#[cfg(feature = "maildir")]
-fn maildir_flag_from(flag: &Flag) -> MdFlag {
-    match flag {
-        Flag::Seen => MdFlag::Seen,
-        Flag::Answered => MdFlag::Replied,
-        Flag::Flagged => MdFlag::Flagged,
-        Flag::Draft => MdFlag::Draft,
-    }
-}
+                Ok(())
+            }
+            #[cfg(feature = "maildir")]
+            Self::Maildir(client) => {
+                use crate::maildir::convert::open_maildir;
 
-#[cfg(feature = "maildir")]
-fn open_maildir(client: &MaildirClient, name: &str) -> Result<Maildir, EmailClientError> {
-    let path = client.root().join(name);
-    Maildir::try_from(path.as_path())
-        .map_err(|_| EmailClientError::InvalidMaildir(path.to_string_lossy().into_owned()))
-}
+                let src = open_maildir(client, from)?;
+                let dst = open_maildir(client, to)?;
 
-#[cfg(feature = "maildir")]
-fn paginate(envelopes: Vec<Envelope>, page: Option<u32>, page_size: Option<u32>) -> Vec<Envelope> {
-    let Some(size) = page_size else {
-        return envelopes;
-    };
+                for id in ids {
+                    client.copy(*id, src.clone(), dst.clone(), None)?;
+                }
 
-    if size == 0 {
-        return Vec::new();
+                Ok(())
+            }
+            #[cfg(feature = "smtp")]
+            Self::Smtp(_) => Err(EmailClientStdError::UnsupportedOperation),
+        }
     }
 
-    let page = page.unwrap_or(1).max(1);
-    let skip = ((page - 1) as usize).saturating_mul(size as usize);
+    /// Moves every message in `ids` from mailbox `from` to mailbox
+    /// `to`. The originals are removed from `from`.
+    pub fn move_messages(
+        &mut self,
+        from: &str,
+        to: &str,
+        ids: &[&str],
+    ) -> Result<(), EmailClientStdError> {
+        trace!("move messages with {self:?}");
 
-    if skip >= envelopes.len() {
-        return Vec::new();
+        match self {
+            #[cfg(feature = "imap")]
+            Self::Imap(client) => {
+                use crate::imap::convert::{parse_mailbox, parse_uids};
+
+                let src = parse_mailbox(from)?;
+                let dst = parse_mailbox(to)?;
+                let _ = client.select(src)?;
+
+                let sequence_set = parse_uids(ids)?;
+                let _ = client.r#move(sequence_set, dst, true)?;
+
+                Ok(())
+            }
+            #[cfg(feature = "jmap")]
+            Self::Jmap(client) => {
+                use alloc::string::ToString;
+
+                use io_jmap::rfc8621::email_set::JmapEmailSetArgs;
+
+                let mq = client.mailbox_query(None, None, None, None, None)?;
+                let src_id = mq
+                    .mailboxes
+                    .iter()
+                    .find(|m| m.name.as_deref() == Some(from))
+                    .and_then(|m| m.id.clone())
+                    .ok_or_else(|| EmailClientStdError::MailboxNotFound(from.to_string()))?;
+                let dst_id = mq
+                    .mailboxes
+                    .iter()
+                    .find(|m| m.name.as_deref() == Some(to))
+                    .and_then(|m| m.id.clone())
+                    .ok_or_else(|| EmailClientStdError::MailboxNotFound(to.to_string()))?;
+
+                let mut args = JmapEmailSetArgs::default();
+                for id in ids {
+                    args.remove_from_mailbox(id.to_string(), src_id.clone());
+                    args.add_to_mailbox(id.to_string(), dst_id.clone());
+                }
+
+                let _ = client.email_set(args)?;
+
+                Ok(())
+            }
+            #[cfg(feature = "maildir")]
+            Self::Maildir(client) => {
+                use crate::maildir::convert::open_maildir;
+
+                let src = open_maildir(client, from)?;
+                let dst = open_maildir(client, to)?;
+
+                for id in ids {
+                    client.r#move(*id, src.clone(), dst.clone(), None)?;
+                }
+
+                Ok(())
+            }
+            #[cfg(feature = "smtp")]
+            Self::Smtp(_) => Err(EmailClientStdError::UnsupportedOperation),
+        }
     }
 
-    envelopes
-        .into_iter()
-        .skip(skip)
-        .take(size as usize)
-        .collect()
-}
+    /// Sends a raw RFC 5322 message.
+    ///
+    /// `from` is the envelope sender (bare `local@domain`, no angle
+    /// brackets); `to` is the non-empty list of envelope recipients.
+    /// Envelope addresses are independent of the `From:` / `To:` /
+    /// `Cc:` / `Bcc:` headers inside `raw` and govern actual routing.
+    pub fn send_message(
+        &mut self,
+        raw: Vec<u8>,
+        from: &str,
+        to: &[&str],
+    ) -> Result<(), EmailClientStdError> {
+        trace!("send message with {self:?}");
 
-#[cfg(feature = "imap")]
-impl From<ImapClient> for EmailClient {
-    fn from(client: ImapClient) -> Self {
-        Self::Imap(client)
-    }
-}
+        match self {
+            #[cfg(feature = "imap")]
+            Self::Imap(_) => Err(EmailClientStdError::UnsupportedOperation),
+            #[cfg(feature = "maildir")]
+            Self::Maildir(_) => Err(EmailClientStdError::UnsupportedOperation),
+            #[cfg(feature = "smtp")]
+            Self::Smtp(client) => {
+                use io_smtp::rfc5321::types::{
+                    forward_path::ForwardPath, reverse_path::ReversePath,
+                };
 
-#[cfg(feature = "jmap")]
-impl From<JmapClient> for EmailClient {
-    fn from(client: JmapClient) -> Self {
-        Self::Jmap(client)
-    }
-}
+                use crate::smtp::convert::parse_mailbox;
 
-#[cfg(feature = "maildir")]
-impl From<MaildirClient> for EmailClient {
-    fn from(client: MaildirClient) -> Self {
-        Self::Maildir(client)
-    }
-}
+                if to.is_empty() {
+                    return Err(EmailClientStdError::MissingInput("to"));
+                }
 
-#[cfg(feature = "smtp")]
-impl From<SmtpClient> for EmailClient {
-    fn from(client: SmtpClient) -> Self {
-        Self::Smtp(client)
+                let reverse_path = ReversePath::Mailbox(parse_mailbox(from)?);
+                let forward_paths: Vec<ForwardPath<'static>> = to
+                    .iter()
+                    .map(|addr| parse_mailbox(addr).map(ForwardPath))
+                    .collect::<Result<_, _>>()?;
+
+                client.send(reverse_path, forward_paths, raw)?;
+
+                Ok(())
+            }
+            #[cfg(feature = "jmap")]
+            Self::Jmap(client) => {
+                use alloc::{collections::BTreeMap, string::ToString};
+
+                use io_jmap::{
+                    client::JmapClientStdError,
+                    rfc8621::{
+                        capabilities,
+                        email::EmailImport,
+                        email_submission::{
+                            EmailAddressWithParameters, EmailSubmissionCreate, Envelope,
+                        },
+                        mailbox::{MailboxFilter, MailboxRole},
+                    },
+                };
+                use url::Url;
+
+                if to.is_empty() {
+                    return Err(EmailClientStdError::MissingInput("to"));
+                }
+
+                let identity_id = client
+                    .identity_get(None)?
+                    .identities
+                    .into_iter()
+                    .find(|i| i.email == from)
+                    .map(|i| i.id)
+                    .ok_or_else(|| EmailClientStdError::IdentityNotFound(from.to_string()))?;
+
+                let drafts_id = client
+                    .mailbox_query(
+                        Some(MailboxFilter {
+                            role: Some(MailboxRole::Drafts),
+                            ..MailboxFilter::default()
+                        }),
+                        None,
+                        None,
+                        None,
+                        None,
+                    )?
+                    .mailboxes
+                    .into_iter()
+                    .next()
+                    .and_then(|m| m.id)
+                    .ok_or_else(|| EmailClientStdError::MailboxNotFound("drafts".to_string()))?;
+
+                let session = client
+                    .session()
+                    .ok_or(JmapClientStdError::MissingSession)?
+                    .clone();
+                let account_id = session
+                    .primary_accounts
+                    .get(capabilities::MAIL)
+                    .cloned()
+                    .unwrap_or_default();
+                let upload_url_str = session.upload_url.replace("{accountId}", &account_id);
+                let upload_url = Url::parse(&upload_url_str)
+                    .map_err(|_| EmailClientStdError::InvalidUrl(upload_url_str))?;
+                let blob = client.blob_upload(&upload_url, "message/rfc822", raw)?;
+
+                let mut mailbox_ids = BTreeMap::new();
+                mailbox_ids.insert(drafts_id, true);
+
+                let mut imports = BTreeMap::new();
+                imports.insert(
+                    "new".to_string(),
+                    EmailImport {
+                        blob_id: blob.blob_id,
+                        mailbox_ids,
+                        keywords: None,
+                        received_at: None,
+                    },
+                );
+
+                let import = client.email_import(imports)?;
+                if !import.not_created.is_empty() || import.created.is_empty() {
+                    return Err(EmailClientStdError::OperationFailed("import"));
+                }
+                let email_id = import
+                    .created
+                    .values()
+                    .next()
+                    .and_then(|e| e.id.clone())
+                    .ok_or(EmailClientStdError::OperationFailed("import"))?;
+
+                let envelope = Envelope {
+                    mail_from: EmailAddressWithParameters {
+                        email: from.to_string(),
+                        parameters: None,
+                    },
+                    rcpt_to: to
+                        .iter()
+                        .map(|addr| EmailAddressWithParameters {
+                            email: (*addr).to_string(),
+                            parameters: None,
+                        })
+                        .collect(),
+                };
+
+                let mut submissions = BTreeMap::new();
+                submissions.insert(
+                    "send".to_string(),
+                    EmailSubmissionCreate {
+                        identity_id,
+                        email_id,
+                        envelope: Some(envelope),
+                    },
+                );
+
+                let submission = client.email_submission_set(submissions)?;
+                if !submission.not_created.is_empty() || submission.created.is_empty() {
+                    return Err(EmailClientStdError::OperationFailed("submission"));
+                }
+
+                Ok(())
+            }
+        }
     }
 }

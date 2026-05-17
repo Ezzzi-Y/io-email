@@ -26,7 +26,7 @@ pub enum Flag {
 
 impl Flag {
     /// Parses a wire flag string (IMAP `\Seen`, JMAP `$seen`, Maildir
-    /// letter — already lowercased by the caller is fine).
+    /// letter; already lowercased by the caller is fine).
     ///
     /// Returns `None` for anything outside the four LCD variants.
     /// Callers typically chain `.filter_map(Flag::parse)` to drop
@@ -41,4 +41,19 @@ impl Flag {
             _ => None,
         }
     }
+}
+
+/// Direction of a flag store operation.
+///
+/// `Set` replaces the message's flag set with the given list; `Add`
+/// and `Remove` patch the existing set. Used internally by
+/// [`EmailClientStd`](crate::client::EmailClientStd) to share the
+/// per-backend store path across `add_flags` / `set_flags` /
+/// `delete_flags`.
+#[derive(Clone, Copy, Debug)]
+#[allow(dead_code)]
+pub(crate) enum FlagOp {
+    Add,
+    Set,
+    Remove,
 }

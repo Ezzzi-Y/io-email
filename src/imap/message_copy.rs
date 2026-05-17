@@ -3,8 +3,9 @@
 //! then issues a UID COPY command to copy the requested messages into
 //! the destination mailbox.
 
-use alloc::vec::Vec;
 use core::mem;
+
+use alloc::vec::Vec;
 
 use io_imap::{
     context::ImapContext,

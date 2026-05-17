@@ -1,6 +1,6 @@
 //! JMAP mailbox listing (`Mailbox/query` + `Mailbox/get`), wrapping
 //! [`io_jmap::rfc8621::mailbox_query::JmapMailboxQuery`] and producing
-//! the shared [`Mailbox`](crate::mailbox::Mailbox) type on completion.
+//! the shared [`Mailbox`] type on completion.
 //!
 //! `total`/`unread` are populated unconditionally because JMAP returns
 //! them in the same `Mailbox/get` response — there is no extra

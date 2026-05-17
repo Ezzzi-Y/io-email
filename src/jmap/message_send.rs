@@ -4,12 +4,13 @@
 //! provided drafts mailbox with the `$draft` keyword, then submits
 //! them with the caller-provided identity.
 
+use core::mem;
+
 use alloc::{
     collections::BTreeMap,
     string::{String, ToString},
     vec::Vec,
 };
-use core::mem;
 
 use io_jmap::{
     rfc8620::{

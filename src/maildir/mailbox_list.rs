@@ -1,10 +1,10 @@
 //! Maildir mailbox listing, wrapping
 //! [`io_maildir::coroutines::maildir_list::MaildirList`] and producing
-//! the shared [`Mailbox`](crate::mailbox::Mailbox) type on completion.
+//! the shared [`Mailbox`] type on completion.
 //!
 //! Per-mailbox counts are not populated here — counting requires
 //! enumerating each maildir's `cur/`+`new/` entries, which is driven
-//! at the [`crate::client::EmailClient`] level when the caller opts
+//! at the [`crate::client::EmailClientStd`] level when the caller opts
 //! in.
 
 use alloc::{

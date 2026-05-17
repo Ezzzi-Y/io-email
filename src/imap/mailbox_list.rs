@@ -1,10 +1,10 @@
 //! IMAP mailbox listing (`LIST "" "*"`), wrapping
 //! [`io_imap::rfc3501::list::ImapMailboxList`] and producing the shared
-//! [`Mailbox`](crate::mailbox::Mailbox) type on completion.
+//! [`Mailbox`] type on completion.
 //!
 //! Per-mailbox counts are not populated here — IMAP requires a
 //! separate STATUS round-trip per mailbox, which is driven at the
-//! [`crate::client::EmailClient`] level when the caller opts in.
+//! [`crate::client::EmailClientStd`] level when the caller opts in.
 
 use alloc::vec::Vec;
 

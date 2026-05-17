@@ -2,8 +2,9 @@
 //! orchestrator that selects the mailbox, then issues a STORE command
 //! to remove the requested flags.
 
-use alloc::vec::Vec;
 use core::mem;
+
+use alloc::vec::Vec;
 
 use io_imap::{
     context::ImapContext,

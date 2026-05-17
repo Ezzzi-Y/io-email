@@ -3,11 +3,12 @@
 //! destination mailbox names to ids, then patches each email's
 //! `mailboxIds` to remove the source and add the destination.
 
+use core::mem;
+
 use alloc::{
     string::{String, ToString},
     vec::Vec,
 };
-use core::mem;
 
 use io_jmap::{
     rfc8620::session::JmapSession,

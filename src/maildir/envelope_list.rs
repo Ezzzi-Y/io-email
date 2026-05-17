@@ -1,7 +1,6 @@
 //! Maildir envelope listing, wrapping
 //! [`io_maildir::coroutines::message_list::MaildirMessagesList`] and
-//! producing the shared [`Envelope`](crate::envelope::Envelope) type
-//! on completion.
+//! producing the shared [`Envelope`] type on completion.
 
 use alloc::{
     collections::{BTreeMap, BTreeSet},
@@ -18,6 +17,7 @@ use io_maildir::{
     },
     maildir::Maildir,
     message::Message as MaildirMessage,
+    parser::Address as MailParserAddress,
 };
 use log::trace;
 
@@ -190,7 +190,7 @@ fn parse_filename_flags(path: &Path) -> BTreeSet<Flag> {
         .collect()
 }
 
-fn addresses_from(addrs: &io_maildir::types::Address<'_>) -> Vec<Address> {
+fn addresses_from(addrs: &MailParserAddress<'_>) -> Vec<Address> {
     addrs
         .clone()
         .into_list()

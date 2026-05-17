@@ -3,12 +3,13 @@
 //! bytes, resolves the destination mailbox name to an id, then imports
 //! the blob into that mailbox.
 
+use core::mem;
+
 use alloc::{
     collections::BTreeMap,
     string::{String, ToString},
     vec::Vec,
 };
-use core::mem;
 
 use io_jmap::{
     rfc8620::{

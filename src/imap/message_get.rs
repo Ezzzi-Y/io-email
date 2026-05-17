@@ -2,8 +2,9 @@
 //! orchestrator that selects the mailbox, then fetches the raw RFC
 //! 5322 bytes for the requested message.
 
-use alloc::vec::Vec;
 use core::{mem, num::NonZeroU32};
+
+use alloc::vec::Vec;
 
 use io_imap::{
     context::ImapContext,

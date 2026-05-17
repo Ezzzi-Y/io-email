@@ -7,11 +7,12 @@
 //! [`io_jmap::rfc8621::email_copy::JmapEmailCopy`] and is intentionally
 //! out of scope here.
 
+use core::mem;
+
 use alloc::{
     string::{String, ToString},
     vec::Vec,
 };
-use core::mem;
 
 use io_jmap::{
     rfc8620::session::JmapSession,

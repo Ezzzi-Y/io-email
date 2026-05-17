@@ -3,8 +3,9 @@
 //! mailbox, then issues a UID MOVE command to relocate the requested
 //! messages into the destination mailbox.
 
-use alloc::vec::Vec;
 use core::mem;
+
+use alloc::vec::Vec;
 
 use io_imap::{
     context::ImapContext,

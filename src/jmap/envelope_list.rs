@@ -1,6 +1,6 @@
 //! JMAP envelope listing (`Email/query` + `Email/get`), wrapping
 //! [`io_jmap::rfc8621::email_query::JmapEmailQuery`] and producing the
-//! shared [`Envelope`](crate::envelope::Envelope) type on completion.
+//! shared [`Envelope`] type on completion.
 
 use alloc::vec::Vec;
 

@@ -1,3 +1,5 @@
+#[cfg(feature = "client")]
+pub mod convert;
 pub mod envelope_list;
 pub mod flag_add;
 pub mod flag_delete;

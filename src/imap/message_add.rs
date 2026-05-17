@@ -2,7 +2,10 @@
 //! [`io_imap::rfc3501::append::ImapMessageAppend`] to add a raw RFC
 //! 5322 message to a mailbox without selecting it first.
 
-use alloc::{string::ToString, vec::Vec};
+use alloc::{
+    string::{String, ToString},
+    vec::Vec,
+};
 
 use io_imap::{
     context::ImapContext,

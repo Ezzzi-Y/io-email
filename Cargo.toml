@@ -17,19 +17,12 @@ all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 
 [features]
-default = ["imap", "jmap", "maildir", "smtp", "serde"]
-std = []
-client = [
-    "std",
-    "io-imap?/client",
-    "io-jmap?/client",
-    "io-maildir?/client",
-    "io-smtp?/client",
-]
+default = []
+client = ["pimalaya-stream/std", "io-imap?/client", "io-jmap?/client", "io-maildir?/client", "io-smtp?/client"]
 imap = ["dep:io-imap", "dep:mail-parser"]
 jmap = ["dep:io-jmap", "dep:mail-parser", "dep:secrecy", "dep:url"]
-maildir = ["dep:io-maildir", "dep:mail-parser"]
 smtp = ["dep:io-smtp"]
+maildir = ["client", "dep:io-maildir", "io-maildir?/client", "dep:mail-parser"]
 serde = ["dep:serde", "chrono/serde", "mail-parser?/serde"]
 
 [dependencies]
@@ -40,14 +33,16 @@ io-maildir = { version = "0.0.1", default-features = false, optional = true }
 io-smtp = { version = "0.0.1", default-features = false, optional = true }
 log = { version = "0.4", default-features = false }
 mail-parser = { version = "0.11", optional = true }
+pimalaya-stream = { version = "0.0.1", default-features = false, optional = true }
 secrecy = { version = "0.10", optional = true }
 serde = { version = "1", default-features = false, features = ["derive"], optional = true }
 thiserror = { version = "2", default-features = false }
 url = { version = "2.5", default-features = false, optional = true }
 
 [patch.crates-io]
-io-http.path = "../io-http"
-io-imap.path = "../io-imap"
-io-jmap.path = "../io-jmap"
-io-maildir.path = "../io-maildir"
-io-smtp.path = "../io-smtp"
+io-http.git = "https://github.com/pimalaya/io-http"
+io-imap.git = "https://github.com/pimalaya/io-imap"
+io-jmap.git = "https://github.com/pimalaya/io-jmap"
+io-maildir.git = "https://github.com/pimalaya/io-maildir"
+io-smtp.git = "https://github.com/pimalaya/io-smtp"
+pimalaya-stream.git = "https://github.com/pimalaya/stream"

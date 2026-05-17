@@ -1,7 +1,6 @@
 //! IMAP envelope listing (`SELECT` + `FETCH UID FLAGS ENVELOPE
 //! RFC822.SIZE [BODYSTRUCTURE]`), wrapping a private orchestrator and
-//! producing the shared [`Envelope`](crate::envelope::Envelope) type
-//! on completion.
+//! producing the shared [`Envelope`] type on completion.
 //!
 //! The `Date:` header is taken from `ENVELOPE.date` and parsed as RFC
 //! 2822 — `INTERNALDATE` is intentionally not requested since
@@ -11,13 +10,14 @@
 //! by `SELECT`. Page 1 is the most recent window (highest sequence
 //! numbers); page 2 the previous window, and so on.
 
+use core::{mem, str::from_utf8};
+
 use alloc::{
     collections::BTreeSet,
     format,
     string::{String, ToString},
     vec::Vec,
 };
-use core::mem;
 
 use chrono::{DateTime, FixedOffset};
 use io_imap::{
@@ -225,7 +225,7 @@ impl EnvelopeList {
 }
 
 /// Builds the static FETCH item-name list used by both the wrapped
-/// coroutine and the `EmailClient` shortcut path. Always requests UID
+/// coroutine and the `EmailClientStd` shortcut path. Always requests UID
 /// + FLAGS + ENVELOPE + RFC822.SIZE; appends BODYSTRUCTURE only when
 /// the caller opted in to attachment detection.
 pub(crate) fn build_item_names(with_attachment: bool) -> MacroOrMessageDataItemNames<'static> {
@@ -408,7 +408,7 @@ fn parse_rfc2822_date(raw: &str) -> Option<DateTime<FixedOffset>> {
 }
 
 fn bytes_to_string(bytes: &[u8]) -> String {
-    core::str::from_utf8(bytes)
+    from_utf8(bytes)
         .map(ToString::to_string)
         .unwrap_or_else(|_| {
             let mut out = String::with_capacity(bytes.len());
