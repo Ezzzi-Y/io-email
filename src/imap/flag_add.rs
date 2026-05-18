@@ -1,6 +1,6 @@
 //! IMAP flag add (`SELECT` + `STORE +FLAGS`), wrapping a private
-//! orchestrator that selects the mailbox, then issues a STORE command
-//! to add the requested flags.
+//! orchestrator that selects the mailbox then stores the requested
+//! flags.
 
 use core::mem;
 
@@ -9,9 +9,7 @@ use alloc::vec::Vec;
 use io_imap::{
     context::ImapContext,
     rfc3501::{
-        select::{
-            ImapMailboxSelect, ImapMailboxSelectError as ImapSelectError, ImapMailboxSelectResult,
-        },
+        select::{ImapMailboxSelect, ImapMailboxSelectError, ImapMailboxSelectResult},
         store::{ImapMessageStore, ImapMessageStoreError, ImapMessageStoreResult},
     },
     types::{
@@ -23,49 +21,44 @@ use io_imap::{
 use log::trace;
 use thiserror::Error;
 
-/// Errors produced while orchestrating SELECT + STORE for IMAP flag
-/// add.
+/// Errors produced while orchestrating SELECT + STORE for IMAP flag add.
 #[derive(Debug, Error)]
-pub enum FlagAddError {
+pub enum ImapFlagAddError {
     #[error(transparent)]
-    Select(#[from] ImapSelectError),
+    Select(#[from] ImapMailboxSelectError),
     #[error(transparent)]
     Store(#[from] ImapMessageStoreError),
     #[error("IMAP flag add was resumed after completion")]
     AlreadyDone,
 }
 
-/// Result returned by [`FlagAdd::resume`].
+/// Result returned by [`ImapFlagAdd::resume`].
 #[derive(Debug)]
-pub enum FlagAddResult {
+pub enum ImapFlagAddResult {
     Ok,
     WantsRead,
     WantsWrite(Vec<u8>),
-    Err(FlagAddError),
+    Err(ImapFlagAddError),
 }
 
-/// I/O-free coroutine wrapping `SELECT <mailbox>` followed by `STORE
-/// <sequence-set> +FLAGS <flags>`.
-pub struct FlagAdd {
-    inner: Inner,
-    pending: Option<PendingStore>,
-}
-
-struct PendingStore {
-    sequence_set: SequenceSet,
-    flags: Vec<ImapFlag<'static>>,
-    uid: bool,
-}
-
-enum Inner {
-    Selecting(ImapMailboxSelect),
+enum State {
+    Selecting {
+        select: ImapMailboxSelect,
+        sequence_set: SequenceSet,
+        flags: Vec<ImapFlag<'static>>,
+        uid: bool,
+    },
     Storing(ImapMessageStore),
     Done,
 }
 
-impl FlagAdd {
-    /// Selects the mailbox read-write, then issues `STORE
-    /// <sequence-set> +FLAGS <flags>`.
+/// I/O-free coroutine wrapping `SELECT <mailbox>` followed by `STORE
+/// <sequence-set> +FLAGS <flags>`.
+pub struct ImapFlagAdd {
+    state: State,
+}
+
+impl ImapFlagAdd {
     pub fn new(
         context: ImapContext,
         mailbox: ImapMailbox<'static>,
@@ -75,64 +68,71 @@ impl FlagAdd {
     ) -> Self {
         trace!("prepare IMAP flag add");
         Self {
-            inner: Inner::Selecting(ImapMailboxSelect::new(context, mailbox)),
-            pending: Some(PendingStore {
+            state: State::Selecting {
+                select: ImapMailboxSelect::new(context, mailbox),
                 sequence_set,
                 flags,
                 uid,
-            }),
+            },
         }
     }
 
-    /// Advances the orchestrator. Drives SELECT first, then STORE.
-    pub fn resume(&mut self, arg: Option<&[u8]>) -> FlagAddResult {
-        let mut input = arg;
-
+    pub fn resume(&mut self, mut arg: Option<&[u8]>) -> ImapFlagAddResult {
         loop {
-            let inner = mem::replace(&mut self.inner, Inner::Done);
-
-            match inner {
-                Inner::Selecting(mut select) => match select.resume(input.take()) {
+            match mem::replace(&mut self.state, State::Done) {
+                State::Selecting {
+                    mut select,
+                    sequence_set,
+                    flags,
+                    uid,
+                } => match select.resume(arg.take()) {
                     ImapMailboxSelectResult::WantsRead => {
-                        self.inner = Inner::Selecting(select);
-                        return FlagAddResult::WantsRead;
+                        self.state = State::Selecting {
+                            select,
+                            sequence_set,
+                            flags,
+                            uid,
+                        };
+                        return ImapFlagAddResult::WantsRead;
                     }
                     ImapMailboxSelectResult::WantsWrite(bytes) => {
-                        self.inner = Inner::Selecting(select);
-                        return FlagAddResult::WantsWrite(bytes);
+                        self.state = State::Selecting {
+                            select,
+                            sequence_set,
+                            flags,
+                            uid,
+                        };
+                        return ImapFlagAddResult::WantsWrite(bytes);
                     }
                     ImapMailboxSelectResult::Err { err, .. } => {
-                        return FlagAddResult::Err(err.into());
+                        return ImapFlagAddResult::Err(err.into());
                     }
                     ImapMailboxSelectResult::Ok { context, .. } => {
-                        let pending = self.pending.take().expect("pending store set on construct");
                         let store = ImapMessageStore::new(
                             context,
-                            pending.sequence_set,
+                            sequence_set,
                             StoreType::Add,
-                            pending.flags,
-                            pending.uid,
+                            flags,
+                            uid,
                         );
-                        self.inner = Inner::Storing(store);
+                        self.state = State::Storing(store);
                     }
                 },
-                Inner::Storing(mut store) => match store.resume(input.take()) {
+                State::Storing(mut store) => match store.resume(arg.take()) {
                     ImapMessageStoreResult::WantsRead => {
-                        self.inner = Inner::Storing(store);
-                        return FlagAddResult::WantsRead;
+                        self.state = State::Storing(store);
+                        return ImapFlagAddResult::WantsRead;
                     }
                     ImapMessageStoreResult::WantsWrite(bytes) => {
-                        self.inner = Inner::Storing(store);
-                        return FlagAddResult::WantsWrite(bytes);
+                        self.state = State::Storing(store);
+                        return ImapFlagAddResult::WantsWrite(bytes);
                     }
                     ImapMessageStoreResult::Err { err, .. } => {
-                        return FlagAddResult::Err(err.into());
+                        return ImapFlagAddResult::Err(err.into());
                     }
-                    ImapMessageStoreResult::Ok { .. } => return FlagAddResult::Ok,
+                    ImapMessageStoreResult::Ok { .. } => return ImapFlagAddResult::Ok,
                 },
-                Inner::Done => {
-                    return FlagAddResult::Err(FlagAddError::AlreadyDone);
-                }
+                State::Done => return ImapFlagAddResult::Err(ImapFlagAddError::AlreadyDone),
             }
         }
     }

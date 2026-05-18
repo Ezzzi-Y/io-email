@@ -1,6 +1,5 @@
-//! IMAP message get (`SELECT` + `FETCH BODY[]`), wrapping a private
-//! orchestrator that selects the mailbox, then fetches the raw RFC
-//! 5322 bytes for the requested message.
+//! IMAP message get (`SELECT` + `FETCH BODY.PEEK[]`), wrapping a private
+//! orchestrator. Returns raw RFC 5322 bytes.
 
 use core::{mem, num::NonZeroU32};
 
@@ -9,13 +8,8 @@ use alloc::vec::Vec;
 use io_imap::{
     context::ImapContext,
     rfc3501::{
-        fetch::{
-            ImapMessageFetchError as ImapFetchError, ImapMessageFetchFirst,
-            ImapMessageFetchFirstResult,
-        },
-        select::{
-            ImapMailboxSelect, ImapMailboxSelectError as ImapSelectError, ImapMailboxSelectResult,
-        },
+        fetch::{ImapMessageFetchError, ImapMessageFetchFirst, ImapMessageFetchFirstResult},
+        select::{ImapMailboxSelect, ImapMailboxSelectError, ImapMailboxSelectResult},
     },
     types::{
         fetch::{MacroOrMessageDataItemNames, MessageDataItem, MessageDataItemName},
@@ -28,47 +22,43 @@ use thiserror::Error;
 /// Errors produced while orchestrating SELECT + FETCH for IMAP message
 /// retrieval.
 #[derive(Debug, Error)]
-pub enum MessageGetError {
+pub enum ImapMessageGetError {
     #[error(transparent)]
-    Select(#[from] ImapSelectError),
+    Select(#[from] ImapMailboxSelectError),
     #[error(transparent)]
-    Fetch(#[from] ImapFetchError),
+    Fetch(#[from] ImapMessageFetchError),
     #[error("FETCH did not return any body for the requested message")]
     Empty,
     #[error("IMAP message get was resumed after completion")]
     AlreadyDone,
 }
 
-/// Result returned by [`MessageGet::resume`].
+/// Result returned by [`ImapMessageGet::resume`].
 #[derive(Debug)]
-pub enum MessageGetResult {
+pub enum ImapMessageGetResult {
     Ok(Vec<u8>),
     WantsRead,
     WantsWrite(Vec<u8>),
-    Err(MessageGetError),
+    Err(ImapMessageGetError),
 }
 
-/// I/O-free coroutine wrapping `SELECT <mailbox>` followed by `FETCH
-/// <id> BODY.PEEK[]`. Returns the raw RFC 5322 bytes on completion.
-pub struct MessageGet {
-    inner: Inner,
-    pending: Option<PendingFetch>,
-}
-
-struct PendingFetch {
-    id: NonZeroU32,
-    uid: bool,
-}
-
-enum Inner {
-    Selecting(ImapMailboxSelect),
+enum State {
+    Selecting {
+        select: ImapMailboxSelect,
+        id: NonZeroU32,
+        uid: bool,
+    },
     Fetching(ImapMessageFetchFirst),
     Done,
 }
 
-impl MessageGet {
-    /// Selects the mailbox read-write, then fetches the message body
-    /// (peek) for the given id.
+/// I/O-free coroutine wrapping `SELECT <mailbox>` followed by `FETCH
+/// <id> BODY.PEEK[]`.
+pub struct ImapMessageGet {
+    state: State,
+}
+
+impl ImapMessageGet {
     pub fn new(
         context: ImapContext,
         mailbox: ImapMailbox<'static>,
@@ -77,33 +67,34 @@ impl MessageGet {
     ) -> Self {
         trace!("prepare IMAP message get");
         Self {
-            inner: Inner::Selecting(ImapMailboxSelect::new(context, mailbox)),
-            pending: Some(PendingFetch { id, uid }),
+            state: State::Selecting {
+                select: ImapMailboxSelect::new(context, mailbox),
+                id,
+                uid,
+            },
         }
     }
 
-    /// Advances the orchestrator. Drives SELECT first, then FETCH.
-    pub fn resume(&mut self, arg: Option<&[u8]>) -> MessageGetResult {
-        let mut input = arg;
-
+    pub fn resume(&mut self, mut arg: Option<&[u8]>) -> ImapMessageGetResult {
         loop {
-            let inner = mem::replace(&mut self.inner, Inner::Done);
-
-            match inner {
-                Inner::Selecting(mut select) => match select.resume(input.take()) {
+            match mem::replace(&mut self.state, State::Done) {
+                State::Selecting {
+                    mut select,
+                    id,
+                    uid,
+                } => match select.resume(arg.take()) {
                     ImapMailboxSelectResult::WantsRead => {
-                        self.inner = Inner::Selecting(select);
-                        return MessageGetResult::WantsRead;
+                        self.state = State::Selecting { select, id, uid };
+                        return ImapMessageGetResult::WantsRead;
                     }
                     ImapMailboxSelectResult::WantsWrite(bytes) => {
-                        self.inner = Inner::Selecting(select);
-                        return MessageGetResult::WantsWrite(bytes);
+                        self.state = State::Selecting { select, id, uid };
+                        return ImapMessageGetResult::WantsWrite(bytes);
                     }
                     ImapMailboxSelectResult::Err { err, .. } => {
-                        return MessageGetResult::Err(err.into());
+                        return ImapMessageGetResult::Err(err.into());
                     }
                     ImapMailboxSelectResult::Ok { context, .. } => {
-                        let pending = self.pending.take().expect("pending fetch set on construct");
                         let item_names = MacroOrMessageDataItemNames::MessageDataItemNames(vec![
                             MessageDataItemName::BodyExt {
                                 section: None,
@@ -111,26 +102,21 @@ impl MessageGet {
                                 peek: true,
                             },
                         ]);
-                        let fetch = ImapMessageFetchFirst::new(
-                            context,
-                            pending.id,
-                            item_names,
-                            pending.uid,
-                        );
-                        self.inner = Inner::Fetching(fetch);
+                        let fetch = ImapMessageFetchFirst::new(context, id, item_names, uid);
+                        self.state = State::Fetching(fetch);
                     }
                 },
-                Inner::Fetching(mut fetch) => match fetch.resume(input.take()) {
+                State::Fetching(mut fetch) => match fetch.resume(arg.take()) {
                     ImapMessageFetchFirstResult::WantsRead => {
-                        self.inner = Inner::Fetching(fetch);
-                        return MessageGetResult::WantsRead;
+                        self.state = State::Fetching(fetch);
+                        return ImapMessageGetResult::WantsRead;
                     }
                     ImapMessageFetchFirstResult::WantsWrite(bytes) => {
-                        self.inner = Inner::Fetching(fetch);
-                        return MessageGetResult::WantsWrite(bytes);
+                        self.state = State::Fetching(fetch);
+                        return ImapMessageGetResult::WantsWrite(bytes);
                     }
                     ImapMessageFetchFirstResult::Err { err, .. } => {
-                        return MessageGetResult::Err(err.into());
+                        return ImapMessageGetResult::Err(err.into());
                     }
                     ImapMessageFetchFirstResult::Ok { items, .. } => {
                         let raw = items.into_inner().into_iter().find_map(|item| match item {
@@ -141,14 +127,14 @@ impl MessageGet {
                         });
 
                         let Some(raw) = raw else {
-                            return MessageGetResult::Err(MessageGetError::Empty);
+                            return ImapMessageGetResult::Err(ImapMessageGetError::Empty);
                         };
 
-                        return MessageGetResult::Ok(raw);
+                        return ImapMessageGetResult::Ok(raw);
                     }
                 },
-                Inner::Done => {
-                    return MessageGetResult::Err(MessageGetError::AlreadyDone);
+                State::Done => {
+                    return ImapMessageGetResult::Err(ImapMessageGetError::AlreadyDone);
                 }
             }
         }

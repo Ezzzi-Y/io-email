@@ -1,14 +1,10 @@
 //! IMAP envelope listing (`SELECT` + `FETCH UID FLAGS ENVELOPE
-//! RFC822.SIZE [BODYSTRUCTURE]`), wrapping a private orchestrator and
-//! producing the shared [`Envelope`] type on completion.
+//! RFC822.SIZE [BODYSTRUCTURE]`), wrapping a private orchestrator.
 //!
-//! The `Date:` header is taken from `ENVELOPE.date` and parsed as RFC
-//! 2822 — `INTERNALDATE` is intentionally not requested since
-//! server-arrival time is not consistent across backends.
-//!
-//! Pagination is computed against the mailbox `EXISTS` count returned
-//! by `SELECT`. Page 1 is the most recent window (highest sequence
-//! numbers); page 2 the previous window, and so on.
+//! Page 1 is the most recent window (highest sequence numbers). The
+//! `Date:` header is parsed from `ENVELOPE.date` as RFC 2822;
+//! `INTERNALDATE` is not requested (server-arrival time is not
+//! consistent across backends).
 
 use core::{mem, str::from_utf8};
 
@@ -23,12 +19,8 @@ use chrono::{DateTime, FixedOffset};
 use io_imap::{
     context::ImapContext,
     rfc3501::{
-        fetch::{
-            ImapMessageFetch, ImapMessageFetchError as ImapFetchError, ImapMessageFetchResult,
-        },
-        select::{
-            ImapMailboxSelect, ImapMailboxSelectError as ImapSelectError, ImapMailboxSelectResult,
-        },
+        fetch::{ImapMessageFetch, ImapMessageFetchError, ImapMessageFetchResult},
+        select::{ImapMailboxSelect, ImapMailboxSelectError, ImapMailboxSelectResult},
     },
     types::{
         body::BodyStructure,
@@ -46,56 +38,50 @@ use crate::{address::Address, envelope::Envelope, flag::Flag};
 /// Errors produced while orchestrating SELECT + FETCH for IMAP envelope
 /// listing.
 #[derive(Debug, Error)]
-pub enum EnvelopeListError {
+pub enum ImapEnvelopeListError {
     #[error(transparent)]
-    Select(#[from] ImapSelectError),
+    Select(#[from] ImapMailboxSelectError),
     #[error(transparent)]
-    Fetch(#[from] ImapFetchError),
+    Fetch(#[from] ImapMessageFetchError),
     #[error("invalid IMAP sequence-set window {0:?}: {1}")]
     InvalidWindow(String, &'static str),
     #[error("IMAP envelope listing was resumed after completion")]
     AlreadyDone,
 }
 
-/// Result returned by [`EnvelopeList::resume`].
+/// Result returned by [`ImapEnvelopeList::resume`].
 #[derive(Debug)]
-pub enum EnvelopeListResult {
+pub enum ImapEnvelopeListResult {
     Ok(Vec<Envelope>),
     WantsRead,
     WantsWrite(Vec<u8>),
-    Err(EnvelopeListError),
+    Err(ImapEnvelopeListError),
 }
 
-/// I/O-free coroutine wrapping `SELECT <mailbox>` followed by `FETCH
-/// <window> (UID FLAGS ENVELOPE RFC822.SIZE [BODYSTRUCTURE])`.
-///
-/// The window is computed from `EXISTS` and the requested
-/// `page`/`page_size` (both 1-indexed; page 1 = most recent).
-/// The mailbox is selected read-write by default; use
-/// [`EnvelopeList::read_only`] for `EXAMINE`. Pass `with_attachment =
-/// true` to additionally fetch `BODYSTRUCTURE` and populate
-/// [`Envelope::has_attachment`].
-pub struct EnvelopeList {
-    inner: Inner,
-    pending: Option<PendingFetch>,
-}
-
-struct PendingFetch {
-    page: Option<u32>,
-    page_size: Option<u32>,
-    item_names: MacroOrMessageDataItemNames<'static>,
-}
-
-enum Inner {
-    Selecting(ImapMailboxSelect),
+enum State {
+    Selecting {
+        select: ImapMailboxSelect,
+        page: Option<u32>,
+        page_size: Option<u32>,
+        item_names: MacroOrMessageDataItemNames<'static>,
+    },
     Fetching(ImapMessageFetch),
     Done,
 }
 
-impl EnvelopeList {
-    /// Selects the mailbox read-write, then fetches the window
-    /// described by `page`/`page_size`. Pass `page_size = None` to
-    /// fetch the whole mailbox; `page = None` is treated as page 1.
+/// I/O-free coroutine wrapping `SELECT <mailbox>` followed by `FETCH
+/// <window> (UID FLAGS ENVELOPE RFC822.SIZE [BODYSTRUCTURE])`. The
+/// window is computed from `EXISTS` and the requested `page`/`page_size`
+/// (1-indexed; page 1 = most recent). Read-write by default; use
+/// [`ImapEnvelopeList::read_only`] for `EXAMINE`.
+pub struct ImapEnvelopeList {
+    state: State,
+}
+
+impl ImapEnvelopeList {
+    /// `page_size = None` fetches the whole mailbox; `page = None` is
+    /// treated as page 1. `with_attachment = true` additionally fetches
+    /// `BODYSTRUCTURE` to populate [`Envelope::has_attachment`].
     pub fn new(
         context: ImapContext,
         mailbox: ImapMailbox<'static>,
@@ -112,8 +98,7 @@ impl EnvelopeList {
         )
     }
 
-    /// Same as [`EnvelopeList::new`] but issues `EXAMINE` instead of
-    /// `SELECT` (read-only).
+    /// Read-only variant: issues `EXAMINE` instead of `SELECT`.
     pub fn read_only(
         context: ImapContext,
         mailbox: ImapMailbox<'static>,
@@ -137,97 +122,105 @@ impl EnvelopeList {
         with_attachment: bool,
     ) -> Self {
         let item_names = build_item_names(with_attachment);
-
         Self {
-            inner: Inner::Selecting(select),
-            pending: Some(PendingFetch {
+            state: State::Selecting {
+                select,
                 page,
                 page_size,
                 item_names,
-            }),
+            },
         }
     }
 
-    /// Advances the orchestrator. Drives SELECT first, then FETCH.
-    pub fn resume(&mut self, arg: Option<&[u8]>) -> EnvelopeListResult {
-        let mut input = arg;
-
+    pub fn resume(&mut self, mut arg: Option<&[u8]>) -> ImapEnvelopeListResult {
         loop {
-            let inner = mem::replace(&mut self.inner, Inner::Done);
-
-            match inner {
-                Inner::Selecting(mut select) => match select.resume(input.take()) {
+            match mem::replace(&mut self.state, State::Done) {
+                State::Selecting {
+                    mut select,
+                    page,
+                    page_size,
+                    item_names,
+                } => match select.resume(arg.take()) {
                     ImapMailboxSelectResult::WantsRead => {
-                        self.inner = Inner::Selecting(select);
-                        return EnvelopeListResult::WantsRead;
+                        self.state = State::Selecting {
+                            select,
+                            page,
+                            page_size,
+                            item_names,
+                        };
+                        return ImapEnvelopeListResult::WantsRead;
                     }
                     ImapMailboxSelectResult::WantsWrite(bytes) => {
-                        self.inner = Inner::Selecting(select);
-                        return EnvelopeListResult::WantsWrite(bytes);
+                        self.state = State::Selecting {
+                            select,
+                            page,
+                            page_size,
+                            item_names,
+                        };
+                        return ImapEnvelopeListResult::WantsWrite(bytes);
                     }
                     ImapMailboxSelectResult::Err { err, .. } => {
-                        return EnvelopeListResult::Err(err.into());
+                        return ImapEnvelopeListResult::Err(err.into());
                     }
                     ImapMailboxSelectResult::Ok { context, data } => {
-                        let pending = self.pending.take().expect("pending fetch set on construct");
                         let exists = data.exists.unwrap_or(0);
 
-                        let Some(window) = compute_window(exists, pending.page, pending.page_size)
-                        else {
-                            return EnvelopeListResult::Ok(Vec::new());
+                        let Some(window) = compute_window(exists, page, page_size) else {
+                            return ImapEnvelopeListResult::Ok(Vec::new());
                         };
 
                         let sequence_set = match window.as_str().try_into() {
                             Ok(set) => set,
                             Err(_) => {
-                                return EnvelopeListResult::Err(EnvelopeListError::InvalidWindow(
-                                    window,
-                                    "could not parse computed sequence-set",
-                                ));
+                                return ImapEnvelopeListResult::Err(
+                                    ImapEnvelopeListError::InvalidWindow(
+                                        window,
+                                        "could not parse computed sequence-set",
+                                    ),
+                                );
                             }
                         };
 
-                        let fetch =
-                            ImapMessageFetch::new(context, sequence_set, pending.item_names, false);
-                        self.inner = Inner::Fetching(fetch);
+                        let fetch = ImapMessageFetch::new(context, sequence_set, item_names, false);
+                        self.state = State::Fetching(fetch);
                     }
                 },
-                Inner::Fetching(mut fetch) => match fetch.resume(input.take()) {
+                State::Fetching(mut fetch) => match fetch.resume(arg.take()) {
                     ImapMessageFetchResult::WantsRead => {
-                        self.inner = Inner::Fetching(fetch);
-                        return EnvelopeListResult::WantsRead;
+                        self.state = State::Fetching(fetch);
+                        return ImapEnvelopeListResult::WantsRead;
                     }
                     ImapMessageFetchResult::WantsWrite(bytes) => {
-                        self.inner = Inner::Fetching(fetch);
-                        return EnvelopeListResult::WantsWrite(bytes);
+                        self.state = State::Fetching(fetch);
+                        return ImapEnvelopeListResult::WantsWrite(bytes);
                     }
                     ImapMessageFetchResult::Err { err, .. } => {
-                        return EnvelopeListResult::Err(err.into());
+                        return ImapEnvelopeListResult::Err(err.into());
                     }
                     ImapMessageFetchResult::Ok { data, .. } => {
-                        // BTreeMap iteration is ascending by sequence
-                        // number (oldest first); reverse so the
-                        // freshest message comes first.
+                        // BTreeMap iterates ascending by sequence number
+                        // (oldest first); reverse so the freshest comes
+                        // first.
                         let envelopes = data
                             .into_iter()
                             .rev()
                             .map(|(seq, items)| envelope_from(seq.get(), items.into_inner()))
                             .collect();
-                        return EnvelopeListResult::Ok(envelopes);
+                        return ImapEnvelopeListResult::Ok(envelopes);
                     }
                 },
-                Inner::Done => {
-                    return EnvelopeListResult::Err(EnvelopeListError::AlreadyDone);
+                State::Done => {
+                    return ImapEnvelopeListResult::Err(ImapEnvelopeListError::AlreadyDone);
                 }
             }
         }
     }
 }
 
-/// Builds the static FETCH item-name list used by both the wrapped
-/// coroutine and the `EmailClientStd` shortcut path. Always requests UID
-/// + FLAGS + ENVELOPE + RFC822.SIZE; appends BODYSTRUCTURE only when
-/// the caller opted in to attachment detection.
+/// Builds the FETCH item-name list used by both the wrapped coroutine
+/// and the `EmailClientStd` shortcut path. Always requests UID + FLAGS +
+/// ENVELOPE + RFC822.SIZE; appends BODYSTRUCTURE when the caller opted
+/// in to attachment detection.
 pub(crate) fn build_item_names(with_attachment: bool) -> MacroOrMessageDataItemNames<'static> {
     let mut names = vec![
         MessageDataItemName::Uid,
@@ -235,16 +228,17 @@ pub(crate) fn build_item_names(with_attachment: bool) -> MacroOrMessageDataItemN
         MessageDataItemName::Envelope,
         MessageDataItemName::Rfc822Size,
     ];
+
     if with_attachment {
         names.push(MessageDataItemName::BodyStructure);
     }
+
     MacroOrMessageDataItemNames::MessageDataItemNames(names)
 }
 
-/// Computes the IMAP sequence-set string for a `(page, page_size)`
-/// pair against `exists` total messages. Returns `None` when the
-/// window is empty (mailbox empty, page-size 0, or page beyond the
-/// last one).
+/// Computes the IMAP sequence-set string for `(page, page_size)` against
+/// `exists`. `None` means an empty window (empty mailbox, page-size 0,
+/// or page beyond the last one).
 pub(crate) fn compute_window(
     exists: u32,
     page: Option<u32>,
@@ -329,16 +323,14 @@ pub(crate) fn envelope_from(seq: u32, items: Vec<MessageDataItem<'static>>) -> E
     }
 }
 
-pub(crate) fn flag_from(fetch: FlagFetch<'_>) -> Option<Flag> {
+fn flag_from(fetch: FlagFetch<'_>) -> Option<Flag> {
     let FlagFetch::Flag(flag) = fetch else {
-        // `\Recent` is server-managed and not a user keyword.
         return None;
     };
-
     Flag::parse(&flag.to_string())
 }
 
-pub(crate) fn address_from(addr: &ImapAddress<'_>) -> Address {
+fn address_from(addr: &ImapAddress<'_>) -> Address {
     let name = addr
         .name
         .0
@@ -352,6 +344,7 @@ pub(crate) fn address_from(addr: &ImapAddress<'_>) -> Address {
         .as_ref()
         .map(|s| bytes_to_string(s.as_ref()))
         .unwrap_or_default();
+
     let host = addr
         .host
         .0
@@ -374,12 +367,7 @@ pub(crate) fn address_from(addr: &ImapAddress<'_>) -> Address {
     Address { name, email }
 }
 
-/// Walks an IMAP `BODYSTRUCTURE` looking for any leaf marked with a
-/// `Content-Disposition: attachment`. Returns `false` when no leaf
-/// reports that disposition (including when the disposition extension
-/// data is absent — common with bare `BODY` fetches, less so with
-/// `BODYSTRUCTURE`).
-pub(crate) fn body_structure_has_attachment(structure: &BodyStructure<'_>) -> bool {
+fn body_structure_has_attachment(structure: &BodyStructure<'_>) -> bool {
     match structure {
         BodyStructure::Single { extension_data, .. } => {
             let Some(ext) = extension_data.as_ref() else {
@@ -412,9 +400,11 @@ fn bytes_to_string(bytes: &[u8]) -> String {
         .map(ToString::to_string)
         .unwrap_or_else(|_| {
             let mut out = String::with_capacity(bytes.len());
+
             for b in bytes {
                 out.push(*b as char);
             }
+
             out
         })
 }

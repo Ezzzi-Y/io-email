@@ -1,10 +1,8 @@
 //! JMAP mailbox listing (`Mailbox/query` + `Mailbox/get`), wrapping
-//! [`io_jmap::rfc8621::mailbox_query::JmapMailboxQuery`] and producing
-//! the shared [`Mailbox`] type on completion.
+//! [`JmapMailboxQuery`] and producing shared [`Mailbox`] values.
 //!
-//! `total`/`unread` are populated unconditionally because JMAP returns
-//! them in the same `Mailbox/get` response — there is no extra
-//! round-trip to skip.
+//! `total`/`unread` are populated unconditionally; JMAP returns them in
+//! the same `Mailbox/get` response.
 
 use alloc::vec::Vec;
 
@@ -20,15 +18,22 @@ use secrecy::SecretString;
 
 use crate::mailbox::Mailbox;
 
+/// Result returned by [`JmapMailboxList::resume`].
+#[derive(Debug)]
+pub enum JmapMailboxListResult {
+    Ok(Vec<Mailbox>),
+    WantsRead,
+    WantsWrite(Vec<u8>),
+    Err(JmapMailboxQueryError),
+}
+
 /// I/O-free coroutine listing every JMAP mailbox in the session's
-/// primary mail account. Issues `Mailbox/query` + `Mailbox/get`.
-pub struct MailboxList {
+/// primary mail account.
+pub struct JmapMailboxList {
     inner: JmapMailboxQuery,
 }
 
-impl MailboxList {
-    /// Builds the coroutine from a JMAP session and the bearer/basic
-    /// HTTP credential.
+impl JmapMailboxList {
     pub fn new(
         session: &JmapSession,
         http_auth: &SecretString,
@@ -38,27 +43,17 @@ impl MailboxList {
         Ok(Self { inner })
     }
 
-    /// Advances the coroutine.
-    pub fn resume(&mut self, arg: Option<&[u8]>) -> MailboxListResult {
+    pub fn resume(&mut self, arg: Option<&[u8]>) -> JmapMailboxListResult {
         match self.inner.resume(arg) {
-            JmapMailboxQueryResult::WantsRead => MailboxListResult::WantsRead,
-            JmapMailboxQueryResult::WantsWrite(bytes) => MailboxListResult::WantsWrite(bytes),
+            JmapMailboxQueryResult::WantsRead => JmapMailboxListResult::WantsRead,
+            JmapMailboxQueryResult::WantsWrite(bytes) => JmapMailboxListResult::WantsWrite(bytes),
             JmapMailboxQueryResult::Ok { mailboxes, .. } => {
                 let mailboxes = mailboxes.into_iter().map(Mailbox::from).collect();
-                MailboxListResult::Ok(mailboxes)
+                JmapMailboxListResult::Ok(mailboxes)
             }
-            JmapMailboxQueryResult::Err(err) => MailboxListResult::Err(err),
+            JmapMailboxQueryResult::Err(err) => JmapMailboxListResult::Err(err),
         }
     }
-}
-
-/// Result returned by [`MailboxList::resume`].
-#[derive(Debug)]
-pub enum MailboxListResult {
-    Ok(Vec<Mailbox>),
-    WantsRead,
-    WantsWrite(Vec<u8>),
-    Err(JmapMailboxQueryError),
 }
 
 impl From<JmapMailbox> for Mailbox {

@@ -1,88 +1,89 @@
 //! IMAP mailbox listing (`LIST "" "*"`), wrapping
-//! [`io_imap::rfc3501::list::ImapMailboxList`] and producing the shared
-//! [`Mailbox`] type on completion.
+//! [`io_imap::rfc3501::list::ImapMailboxList`].
 //!
-//! Per-mailbox counts are not populated here — IMAP requires a
-//! separate STATUS round-trip per mailbox, which is driven at the
-//! [`crate::client::EmailClientStd`] level when the caller opts in.
+//! Counts are not populated; IMAP requires a separate STATUS round-trip
+//! per mailbox, which is driven at the [`EmailClientStd`] level.
+//!
+//! [`EmailClientStd`]: crate::client::EmailClientStd
 
-use alloc::vec::Vec;
+use alloc::{
+    string::{String, ToString},
+    vec::Vec,
+};
 
 use io_imap::{
     context::ImapContext,
     rfc3501::list::{
-        ImapMailboxList as InnerImapMailboxList, ImapMailboxListError, ImapMailboxListResult,
+        ImapMailboxList as InnerImapMailboxList, ImapMailboxListError,
+        ImapMailboxListResult as InnerImapMailboxListResult,
     },
     types::{
         core::QuotedChar,
         flag::FlagNameAttribute,
-        mailbox::{ListMailbox, Mailbox as ImapMailbox},
+        mailbox::{ListMailbox, Mailbox as InnerImapMailbox},
     },
 };
 use log::trace;
 
 use crate::mailbox::Mailbox;
 
-/// I/O-free coroutine listing every IMAP mailbox visible to the
-/// session. Issues `LIST "" "*"`.
-pub struct MailboxList {
-    inner: InnerImapMailboxList,
-}
-
-impl MailboxList {
-    /// Builds the coroutine from an authenticated [`ImapContext`].
-    pub fn new(context: ImapContext) -> Self {
-        trace!("prepare IMAP mailbox listing");
-        // SAFETY: "" and "*" are always valid IMAP mailbox tokens.
-        let reference: ImapMailbox<'static> = "".try_into().unwrap();
-        let pattern: ListMailbox<'static> = "*".try_into().unwrap();
-        Self {
-            inner: InnerImapMailboxList::new(context, reference, pattern),
-        }
-    }
-
-    /// Advances the coroutine.
-    pub fn resume(&mut self, arg: Option<&[u8]>) -> MailboxListResult {
-        match self.inner.resume(arg) {
-            ImapMailboxListResult::WantsRead => MailboxListResult::WantsRead,
-            ImapMailboxListResult::WantsWrite(bytes) => MailboxListResult::WantsWrite(bytes),
-            ImapMailboxListResult::Ok { mailboxes, .. } => {
-                let mailboxes = mailboxes.into_iter().map(Mailbox::from).collect();
-                MailboxListResult::Ok(mailboxes)
-            }
-            ImapMailboxListResult::Err { err, .. } => MailboxListResult::Err(err),
-        }
-    }
-}
-
-/// Result returned by [`MailboxList::resume`].
+/// Result returned by [`ImapMailboxList::resume`].
 #[derive(Debug)]
-pub enum MailboxListResult {
+pub enum ImapMailboxListResult {
     Ok(Vec<Mailbox>),
     WantsRead,
     WantsWrite(Vec<u8>),
     Err(ImapMailboxListError),
 }
 
+/// I/O-free coroutine listing every IMAP mailbox visible to the session.
+pub struct ImapMailboxList {
+    inner: InnerImapMailboxList,
+}
+
+impl ImapMailboxList {
+    pub fn new(context: ImapContext) -> Self {
+        trace!("prepare IMAP mailbox listing");
+        // SAFETY: "" and "*" are always valid IMAP mailbox tokens.
+        let reference: InnerImapMailbox<'static> = "".try_into().unwrap();
+        let pattern: ListMailbox<'static> = "*".try_into().unwrap();
+        Self {
+            inner: InnerImapMailboxList::new(context, reference, pattern),
+        }
+    }
+
+    pub fn resume(&mut self, arg: Option<&[u8]>) -> ImapMailboxListResult {
+        match self.inner.resume(arg) {
+            InnerImapMailboxListResult::WantsRead => ImapMailboxListResult::WantsRead,
+            InnerImapMailboxListResult::WantsWrite(bytes) => {
+                ImapMailboxListResult::WantsWrite(bytes)
+            }
+            InnerImapMailboxListResult::Ok { mailboxes, .. } => {
+                let mailboxes = mailboxes.into_iter().map(Mailbox::from).collect();
+                ImapMailboxListResult::Ok(mailboxes)
+            }
+            InnerImapMailboxListResult::Err { err, .. } => ImapMailboxListResult::Err(err),
+        }
+    }
+}
+
 impl
     From<(
-        ImapMailbox<'static>,
+        InnerImapMailbox<'static>,
         Option<QuotedChar>,
         Vec<FlagNameAttribute<'static>>,
     )> for Mailbox
 {
     fn from(
         (mailbox, _delimiter, _attrs): (
-            ImapMailbox<'static>,
+            InnerImapMailbox<'static>,
             Option<QuotedChar>,
             Vec<FlagNameAttribute<'static>>,
         ),
     ) -> Self {
-        use alloc::string::{String, ToString};
-
         let name = match mailbox {
-            ImapMailbox::Inbox => "Inbox".to_string(),
-            ImapMailbox::Other(other) => {
+            InnerImapMailbox::Inbox => "Inbox".to_string(),
+            InnerImapMailbox::Other(other) => {
                 String::from_utf8_lossy(other.inner().as_ref()).into_owned()
             }
         };

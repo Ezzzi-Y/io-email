@@ -1,30 +1,7 @@
-//! # Standard, blocking unified email client
-//!
-//! Sum type over the per-backend std clients exposed by [`io-imap`],
-//! [`io-jmap`], [`io-maildir`] and [`io-smtp`]. After construction, callers see
-//! one type and one method set; backend dispatch happens once inside each
-//! method.
-//!
-//! Construction stays asymmetric on purpose: every backend has its own
-//! `connect` / `new` story (URLs, TLS, sessions, paths), so [`EmailClientStd`]
-//! is built from a fully-initialised per-backend client via the [`From`] impls
-//! living in each protocol's [`convert`](crate::imap::convert) module. The IMAP
-//! and SMTP variants carry a [`StreamStd`] transport directly: no boxing, no
-//! generic parameter, no light/full split. For JMAP this means the caller must
-//! have already driven [`JmapClientStd::session_get`].
-//!
-//! The shared method surface is intentionally narrow: only operations that have
-//! a meaningful translation across every enabled backend are exposed here,
-//! returning shared types from [`crate`] (e.g.  [`Mailbox`],
-//! [`Envelope`]). Backend-specific operations stay on the inner client and
-//! remain reachable by pattern-matching the enum.
-//!
-//! [`io-imap`]: io_imap
-//! [`io-jmap`]: io_jmap
-//! [`io-maildir`]: io_maildir
-//! [`io-smtp`]: io_smtp
-//! [`StreamStd`]: pimalaya_stream::std::stream::StreamStd
-//! [`JmapClientStd::session_get`]: io_jmap::client::JmapClientStd::session_get
+//! Std blocking unified email client: sum type over the per-backend
+//! std clients. Built from an already-initialised per-backend client
+//! via `From` impls; backend-specific operations stay reachable by
+//! pattern-matching the enum.
 
 use alloc::{string::String, vec::Vec};
 

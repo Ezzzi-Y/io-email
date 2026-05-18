@@ -1,5 +1,5 @@
-//! JMAP flag delete (`Email/set` with `keywords/<name>: null` patches),
-//! wrapping [`io_jmap::rfc8621::email_set::JmapEmailSet`].
+//! JMAP flag delete (`Email/set` with `keywords/<name>: null`), wrapping
+//! [`io_jmap::rfc8621::email_set::JmapEmailSet`].
 
 use alloc::{string::String, vec::Vec};
 
@@ -10,14 +10,21 @@ use io_jmap::{
 use log::trace;
 use secrecy::SecretString;
 
-/// I/O-free coroutine removing keywords (flags) from a set of emails.
-pub struct FlagDelete {
+/// Result returned by [`JmapFlagDelete::resume`].
+#[derive(Debug)]
+pub enum JmapFlagDeleteResult {
+    Ok,
+    WantsRead,
+    WantsWrite(Vec<u8>),
+    Err(JmapEmailSetError),
+}
+
+/// I/O-free coroutine removing keywords from a set of emails.
+pub struct JmapFlagDelete {
     inner: JmapEmailSet,
 }
 
-impl FlagDelete {
-    /// Builds the coroutine from a JMAP session, the bearer/basic HTTP
-    /// credential, and the `(email_id, keyword)` pairs to unset.
+impl JmapFlagDelete {
     pub fn new<I, J>(
         session: &JmapSession,
         http_auth: &SecretString,
@@ -41,22 +48,12 @@ impl FlagDelete {
         Ok(Self { inner })
     }
 
-    /// Advances the coroutine.
-    pub fn resume(&mut self, arg: Option<&[u8]>) -> FlagDeleteResult {
+    pub fn resume(&mut self, arg: Option<&[u8]>) -> JmapFlagDeleteResult {
         match self.inner.resume(arg) {
-            JmapEmailSetResult::WantsRead => FlagDeleteResult::WantsRead,
-            JmapEmailSetResult::WantsWrite(bytes) => FlagDeleteResult::WantsWrite(bytes),
-            JmapEmailSetResult::Ok { .. } => FlagDeleteResult::Ok,
-            JmapEmailSetResult::Err(err) => FlagDeleteResult::Err(err),
+            JmapEmailSetResult::WantsRead => JmapFlagDeleteResult::WantsRead,
+            JmapEmailSetResult::WantsWrite(bytes) => JmapFlagDeleteResult::WantsWrite(bytes),
+            JmapEmailSetResult::Ok { .. } => JmapFlagDeleteResult::Ok,
+            JmapEmailSetResult::Err(err) => JmapFlagDeleteResult::Err(err),
         }
     }
-}
-
-/// Result returned by [`FlagDelete::resume`].
-#[derive(Debug)]
-pub enum FlagDeleteResult {
-    Ok,
-    WantsRead,
-    WantsWrite(Vec<u8>),
-    Err(JmapEmailSetError),
 }

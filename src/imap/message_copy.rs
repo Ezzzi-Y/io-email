@@ -1,7 +1,5 @@
-//! IMAP message copy (`SELECT <src>` + `UID COPY <ids> <dst>`),
-//! wrapping a private orchestrator that selects the source mailbox,
-//! then issues a UID COPY command to copy the requested messages into
-//! the destination mailbox.
+//! IMAP message copy (`SELECT <src>` + `UID COPY <ids> <dst>`), wrapping
+//! a private orchestrator.
 
 use core::mem;
 
@@ -10,10 +8,12 @@ use alloc::vec::Vec;
 use io_imap::{
     context::ImapContext,
     rfc3501::{
-        copy::{ImapMessageCopy, ImapMessageCopyError, ImapMessageCopyResult},
-        select::{
-            ImapMailboxSelect, ImapMailboxSelectError as ImapSelectError, ImapMailboxSelectResult,
+        copy::{
+            ImapMessageCopy as InnerImapMessageCopy,
+            ImapMessageCopyError as InnerImapMessageCopyError,
+            ImapMessageCopyResult as InnerImapMessageCopyResult,
         },
+        select::{ImapMailboxSelect, ImapMailboxSelectError, ImapMailboxSelectResult},
     },
     types::{mailbox::Mailbox as ImapMailbox, sequence::SequenceSet},
 };
@@ -23,46 +23,43 @@ use thiserror::Error;
 /// Errors produced while orchestrating SELECT + UID COPY for IMAP
 /// message copy.
 #[derive(Debug, Error)]
-pub enum MessageCopyError {
+pub enum ImapMessageCopyError {
     #[error(transparent)]
-    Select(#[from] ImapSelectError),
+    Select(#[from] ImapMailboxSelectError),
     #[error(transparent)]
-    Copy(#[from] ImapMessageCopyError),
+    Copy(#[from] InnerImapMessageCopyError),
     #[error("IMAP message copy was resumed after completion")]
     AlreadyDone,
 }
 
-/// Result returned by [`MessageCopy::resume`].
+/// Result returned by [`ImapMessageCopy::resume`].
 #[derive(Debug)]
-pub enum MessageCopyResult {
+pub enum ImapMessageCopyResult {
     Ok,
     WantsRead,
     WantsWrite(Vec<u8>),
-    Err(MessageCopyError),
+    Err(ImapMessageCopyError),
 }
 
-/// I/O-free coroutine wrapping `SELECT <from>` followed by `UID COPY
-/// <ids> <to>`. UIDs are used by default; pass `uid = false` to
-/// interpret the sequence-set as message sequence numbers.
-pub struct MessageCopy {
-    inner: Inner,
-    pending: Option<PendingCopy>,
-}
-
-struct PendingCopy {
-    sequence_set: SequenceSet,
-    target: ImapMailbox<'static>,
-    uid: bool,
-}
-
-enum Inner {
-    Selecting(ImapMailboxSelect),
-    Copying(ImapMessageCopy),
+enum State {
+    Selecting {
+        select: ImapMailboxSelect,
+        sequence_set: SequenceSet,
+        target: ImapMailbox<'static>,
+        uid: bool,
+    },
+    Copying(InnerImapMessageCopy),
     Done,
 }
 
-impl MessageCopy {
-    /// Selects `from` read-write, then issues `UID COPY <ids> <to>`.
+/// I/O-free coroutine wrapping `SELECT <from>` followed by `UID COPY
+/// <ids> <to>`. UIDs by default; pass `uid = false` to interpret the
+/// sequence-set as message sequence numbers.
+pub struct ImapMessageCopy {
+    state: State,
+}
+
+impl ImapMessageCopy {
     pub fn new(
         context: ImapContext,
         from: ImapMailbox<'static>,
@@ -72,62 +69,66 @@ impl MessageCopy {
     ) -> Self {
         trace!("prepare IMAP message copy");
         Self {
-            inner: Inner::Selecting(ImapMailboxSelect::new(context, from)),
-            pending: Some(PendingCopy {
+            state: State::Selecting {
+                select: ImapMailboxSelect::new(context, from),
                 sequence_set,
                 target: to,
                 uid,
-            }),
+            },
         }
     }
 
-    /// Advances the orchestrator. Drives SELECT first, then UID COPY.
-    pub fn resume(&mut self, arg: Option<&[u8]>) -> MessageCopyResult {
-        let mut input = arg;
-
+    pub fn resume(&mut self, mut arg: Option<&[u8]>) -> ImapMessageCopyResult {
         loop {
-            let inner = mem::replace(&mut self.inner, Inner::Done);
-
-            match inner {
-                Inner::Selecting(mut select) => match select.resume(input.take()) {
+            match mem::replace(&mut self.state, State::Done) {
+                State::Selecting {
+                    mut select,
+                    sequence_set,
+                    target,
+                    uid,
+                } => match select.resume(arg.take()) {
                     ImapMailboxSelectResult::WantsRead => {
-                        self.inner = Inner::Selecting(select);
-                        return MessageCopyResult::WantsRead;
+                        self.state = State::Selecting {
+                            select,
+                            sequence_set,
+                            target,
+                            uid,
+                        };
+                        return ImapMessageCopyResult::WantsRead;
                     }
                     ImapMailboxSelectResult::WantsWrite(bytes) => {
-                        self.inner = Inner::Selecting(select);
-                        return MessageCopyResult::WantsWrite(bytes);
+                        self.state = State::Selecting {
+                            select,
+                            sequence_set,
+                            target,
+                            uid,
+                        };
+                        return ImapMessageCopyResult::WantsWrite(bytes);
                     }
                     ImapMailboxSelectResult::Err { err, .. } => {
-                        return MessageCopyResult::Err(err.into());
+                        return ImapMessageCopyResult::Err(err.into());
                     }
                     ImapMailboxSelectResult::Ok { context, .. } => {
-                        let pending = self.pending.take().expect("pending copy set on construct");
-                        let copy = ImapMessageCopy::new(
-                            context,
-                            pending.sequence_set,
-                            pending.target,
-                            pending.uid,
-                        );
-                        self.inner = Inner::Copying(copy);
+                        let copy = InnerImapMessageCopy::new(context, sequence_set, target, uid);
+                        self.state = State::Copying(copy);
                     }
                 },
-                Inner::Copying(mut copy) => match copy.resume(input.take()) {
-                    ImapMessageCopyResult::WantsRead => {
-                        self.inner = Inner::Copying(copy);
-                        return MessageCopyResult::WantsRead;
+                State::Copying(mut copy) => match copy.resume(arg.take()) {
+                    InnerImapMessageCopyResult::WantsRead => {
+                        self.state = State::Copying(copy);
+                        return ImapMessageCopyResult::WantsRead;
                     }
-                    ImapMessageCopyResult::WantsWrite(bytes) => {
-                        self.inner = Inner::Copying(copy);
-                        return MessageCopyResult::WantsWrite(bytes);
+                    InnerImapMessageCopyResult::WantsWrite(bytes) => {
+                        self.state = State::Copying(copy);
+                        return ImapMessageCopyResult::WantsWrite(bytes);
                     }
-                    ImapMessageCopyResult::Err { err, .. } => {
-                        return MessageCopyResult::Err(err.into());
+                    InnerImapMessageCopyResult::Err { err, .. } => {
+                        return ImapMessageCopyResult::Err(err.into());
                     }
-                    ImapMessageCopyResult::Ok { .. } => return MessageCopyResult::Ok,
+                    InnerImapMessageCopyResult::Ok { .. } => return ImapMessageCopyResult::Ok,
                 },
-                Inner::Done => {
-                    return MessageCopyResult::Err(MessageCopyError::AlreadyDone);
+                State::Done => {
+                    return ImapMessageCopyResult::Err(ImapMessageCopyError::AlreadyDone);
                 }
             }
         }

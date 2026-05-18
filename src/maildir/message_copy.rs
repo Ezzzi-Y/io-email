@@ -9,22 +9,37 @@ use alloc::{
 
 use io_maildir::{
     coroutines::message_copy::{
-        MaildirMessageCopy, MaildirMessageCopyArg, MaildirMessageCopyError,
-        MaildirMessageCopyResult,
+        MaildirMessageCopy as InnerMaildirMessageCopy, MaildirMessageCopyArg as InnerArg,
+        MaildirMessageCopyError, MaildirMessageCopyResult as InnerResult,
     },
     maildir::{Maildir, MaildirSubdir},
 };
 use log::trace;
 
-/// I/O-free coroutine copying a single Maildir message into another
-/// Maildir, preserving the source subdir by default.
-pub struct MessageCopy {
-    inner: MaildirMessageCopy,
+/// Argument fed back to [`MaildirMessageCopy::resume`].
+#[derive(Debug)]
+pub enum MaildirMessageCopyArg {
+    DirRead(BTreeMap<String, BTreeSet<String>>),
+    Copy,
 }
 
-impl MessageCopy {
-    /// Builds the coroutine. `target_subdir` of `None` reuses the
-    /// source subdir (`cur` / `new` / `tmp`).
+/// Result returned by [`MaildirMessageCopy::resume`].
+#[derive(Debug)]
+pub enum MaildirMessageCopyResult {
+    Ok,
+    WantsDirRead(BTreeSet<String>),
+    WantsCopy(Vec<(String, String)>),
+    Err(MaildirMessageCopyError),
+}
+
+/// I/O-free coroutine copying a single Maildir message into another
+/// Maildir, preserving the source subdir by default.
+pub struct MaildirMessageCopy {
+    inner: InnerMaildirMessageCopy,
+}
+
+impl MaildirMessageCopy {
+    /// `target_subdir = None` reuses the source subdir.
     pub fn new(
         id: impl ToString,
         source: Maildir,
@@ -33,41 +48,21 @@ impl MessageCopy {
     ) -> Self {
         trace!("prepare Maildir message copy");
         Self {
-            inner: MaildirMessageCopy::new(id, source, target, target_subdir),
+            inner: InnerMaildirMessageCopy::new(id, source, target, target_subdir),
         }
     }
 
-    /// Advances the coroutine.
-    pub fn resume(&mut self, arg: Option<MessageCopyArg>) -> MessageCopyResult {
+    pub fn resume(&mut self, arg: Option<MaildirMessageCopyArg>) -> MaildirMessageCopyResult {
         let inner_arg = arg.map(|arg| match arg {
-            MessageCopyArg::DirRead(entries) => MaildirMessageCopyArg::DirRead(entries),
-            MessageCopyArg::Copy => MaildirMessageCopyArg::Copy,
+            MaildirMessageCopyArg::DirRead(entries) => InnerArg::DirRead(entries),
+            MaildirMessageCopyArg::Copy => InnerArg::Copy,
         });
 
         match self.inner.resume(inner_arg) {
-            MaildirMessageCopyResult::Ok => MessageCopyResult::Ok,
-            MaildirMessageCopyResult::WantsDirRead(paths) => MessageCopyResult::WantsDirRead(paths),
-            MaildirMessageCopyResult::WantsCopy(pairs) => MessageCopyResult::WantsCopy(pairs),
-            MaildirMessageCopyResult::Err(err) => MessageCopyResult::Err(err),
+            InnerResult::Ok => MaildirMessageCopyResult::Ok,
+            InnerResult::WantsDirRead(paths) => MaildirMessageCopyResult::WantsDirRead(paths),
+            InnerResult::WantsCopy(pairs) => MaildirMessageCopyResult::WantsCopy(pairs),
+            InnerResult::Err(err) => MaildirMessageCopyResult::Err(err),
         }
     }
-}
-
-/// Result returned by [`MessageCopy::resume`].
-#[derive(Debug)]
-pub enum MessageCopyResult {
-    Ok,
-    WantsDirRead(BTreeSet<String>),
-    WantsCopy(Vec<(String, String)>),
-    Err(MaildirMessageCopyError),
-}
-
-/// Argument fed back to [`MessageCopy::resume`] after the caller
-/// performed the requested filesystem operation.
-#[derive(Debug)]
-pub enum MessageCopyArg {
-    /// Response to [`MessageCopyResult::WantsDirRead`].
-    DirRead(BTreeMap<String, BTreeSet<String>>),
-    /// Response to [`MessageCopyResult::WantsCopy`].
-    Copy,
 }

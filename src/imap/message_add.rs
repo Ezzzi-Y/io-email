@@ -1,6 +1,5 @@
 //! IMAP message add (`APPEND <mailbox> [flags] <bytes>`), wrapping
-//! [`io_imap::rfc3501::append::ImapMessageAppend`] to add a raw RFC
-//! 5322 message to a mailbox without selecting it first.
+//! [`io_imap::rfc3501::append::ImapMessageAppend`].
 
 use alloc::{
     string::{String, ToString},
@@ -9,7 +8,10 @@ use alloc::{
 
 use io_imap::{
     context::ImapContext,
-    rfc3501::append::{ImapMessageAppend, ImapMessageAppendError, ImapMessageAppendResult},
+    rfc3501::append::{
+        ImapMessageAppend as InnerImapMessageAppend, ImapMessageAppendError,
+        ImapMessageAppendResult,
+    },
     types::{
         core::Literal, extensions::binary::LiteralOrLiteral8, flag::Flag as ImapFlag,
         mailbox::Mailbox as ImapMailbox,
@@ -20,68 +22,65 @@ use thiserror::Error;
 
 /// Errors produced while running IMAP APPEND.
 #[derive(Debug, Error)]
-pub enum MessageAddError {
+pub enum ImapMessageAddError {
     #[error(transparent)]
     Append(#[from] ImapMessageAppendError),
     #[error("Failed to encode the message as an IMAP literal: {0}")]
     Literal(String),
+    #[error("IMAP message add was resumed after completion")]
+    AlreadyDone,
 }
 
-/// Result returned by [`MessageAdd::resume`].
+/// Result returned by [`ImapMessageAdd::resume`].
+///
+/// `appenduid` is `Some((uidvalidity, uid))` when the server returned an
+/// `[APPENDUID …]` response code (RFC 4315).
 #[derive(Debug)]
-pub enum MessageAddResult {
-    Ok {
-        /// UIDVALIDITY and UID of the appended message, if the server
-        /// returned an `[APPENDUID …]` response code (RFC 4315).
-        appenduid: Option<(u32, u32)>,
-    },
+pub enum ImapMessageAddResult {
+    Ok(Option<(u32, u32)>),
     WantsRead,
     WantsWrite(Vec<u8>),
-    Err(MessageAddError),
+    Err(ImapMessageAddError),
 }
 
 /// I/O-free coroutine wrapping `APPEND <mailbox> [flags] <bytes>`.
-pub struct MessageAdd {
-    inner: Option<ImapMessageAppend>,
+pub struct ImapMessageAdd {
+    inner: Option<InnerImapMessageAppend>,
 }
 
-impl MessageAdd {
-    /// Builds the coroutine. `flags` are written verbatim into the
-    /// APPEND command; pass an empty vec to leave the message
-    /// unflagged.
+impl ImapMessageAdd {
+    /// `flags` are written verbatim into the APPEND command; pass an
+    /// empty vec to leave the message unflagged.
     pub fn new(
         context: ImapContext,
         mailbox: ImapMailbox<'static>,
         flags: Vec<ImapFlag<'static>>,
         raw: Vec<u8>,
-    ) -> Result<Self, MessageAddError> {
+    ) -> Result<Self, ImapMessageAddError> {
         trace!("prepare IMAP message add");
         let literal =
-            Literal::try_from(raw).map_err(|err| MessageAddError::Literal(err.to_string()))?;
+            Literal::try_from(raw).map_err(|err| ImapMessageAddError::Literal(err.to_string()))?;
         let message = LiteralOrLiteral8::Literal(literal);
-        let inner = ImapMessageAppend::new(context, mailbox, flags, None, message);
+        let inner = InnerImapMessageAppend::new(context, mailbox, flags, None, message);
         Ok(Self { inner: Some(inner) })
     }
 
-    /// Advances the coroutine.
-    pub fn resume(&mut self, arg: Option<&[u8]>) -> MessageAddResult {
+    pub fn resume(&mut self, arg: Option<&[u8]>) -> ImapMessageAddResult {
         let Some(mut append) = self.inner.take() else {
-            return MessageAddResult::Err(MessageAddError::Literal(
-                "IMAP message add resumed after completion".into(),
-            ));
+            return ImapMessageAddResult::Err(ImapMessageAddError::AlreadyDone);
         };
 
         match append.resume(arg) {
             ImapMessageAppendResult::WantsRead => {
                 self.inner = Some(append);
-                MessageAddResult::WantsRead
+                ImapMessageAddResult::WantsRead
             }
             ImapMessageAppendResult::WantsWrite(bytes) => {
                 self.inner = Some(append);
-                MessageAddResult::WantsWrite(bytes)
+                ImapMessageAddResult::WantsWrite(bytes)
             }
-            ImapMessageAppendResult::Err { err, .. } => MessageAddResult::Err(err.into()),
-            ImapMessageAppendResult::Ok { appenduid, .. } => MessageAddResult::Ok { appenduid },
+            ImapMessageAppendResult::Err { err, .. } => ImapMessageAddResult::Err(err.into()),
+            ImapMessageAppendResult::Ok { appenduid, .. } => ImapMessageAddResult::Ok(appenduid),
         }
     }
 }

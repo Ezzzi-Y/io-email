@@ -1,11 +1,11 @@
 //! Maildir mailbox listing, wrapping
-//! [`io_maildir::coroutines::maildir_list::MaildirList`] and producing
-//! the shared [`Mailbox`] type on completion.
+//! [`io_maildir::coroutines::maildir_list::MaildirList`].
 //!
-//! Per-mailbox counts are not populated here — counting requires
-//! enumerating each maildir's `cur/`+`new/` entries, which is driven
-//! at the [`crate::client::EmailClientStd`] level when the caller opts
-//! in.
+//! Counts are not populated; counting requires enumerating each
+//! maildir's `cur/`+`new/`, which is driven at the [`EmailClientStd`]
+//! level.
+//!
+//! [`EmailClientStd`]: crate::client::EmailClientStd
 
 use alloc::{
     collections::{BTreeMap, BTreeSet},
@@ -15,66 +15,61 @@ use alloc::{
 use std::path::Path;
 
 use io_maildir::{
-    coroutines::maildir_list::{MaildirList, MaildirListArg, MaildirListError, MaildirListResult},
+    coroutines::maildir_list::{MaildirList as InnerMaildirList, MaildirListArg, MaildirListError},
     maildir::Maildir,
 };
 use log::trace;
 
 use crate::mailbox::Mailbox;
 
-/// I/O-free coroutine listing every Maildir under a root directory.
-pub struct MailboxList {
-    inner: MaildirList,
-}
-
-impl MailboxList {
-    /// Builds the coroutine from the root path containing per-mailbox
-    /// Maildir directories.
-    pub fn new(root: impl AsRef<Path>) -> Self {
-        trace!("prepare Maildir mailbox listing");
-        Self {
-            inner: MaildirList::new(root),
-        }
-    }
-
-    /// Advances the coroutine.
-    pub fn resume(&mut self, arg: Option<MailboxListArg>) -> MailboxListResult {
-        let inner_arg =
-            arg.map(|MailboxListArg::DirRead(entries)| MaildirListArg::DirRead(entries));
-
-        match self.inner.resume(inner_arg) {
-            MaildirListResult::WantsDirRead(paths) => MailboxListResult::WantsDirRead(paths),
-            MaildirListResult::Ok(maildirs) => {
-                let mut mailboxes: Vec<Mailbox> = maildirs.into_iter().map(Mailbox::from).collect();
-                mailboxes.sort_by(|a, b| a.name.cmp(&b.name));
-                MailboxListResult::Ok(mailboxes)
-            }
-            MaildirListResult::Err(err) => MailboxListResult::Err(err),
-        }
-    }
-}
-
-/// Result returned by [`MailboxList::resume`].
+/// Argument fed back to [`MaildirMailboxList::resume`].
 #[derive(Debug)]
-pub enum MailboxListResult {
+pub enum MaildirMailboxListArg {
+    DirRead(BTreeMap<String, BTreeSet<String>>),
+}
+
+/// Result returned by [`MaildirMailboxList::resume`].
+#[derive(Debug)]
+pub enum MaildirMailboxListResult {
     Ok(Vec<Mailbox>),
     WantsDirRead(BTreeSet<String>),
     Err(MaildirListError),
 }
 
-/// Argument fed back to [`MailboxList::resume`] after the caller
-/// performed the requested filesystem operation.
-#[derive(Debug)]
-pub enum MailboxListArg {
-    /// Response to [`MailboxListResult::WantsDirRead`]: each requested
-    /// directory path mapped to the set of entry paths found inside.
-    DirRead(BTreeMap<String, BTreeSet<String>>),
+/// I/O-free coroutine listing every Maildir under a root directory.
+pub struct MaildirMailboxList {
+    inner: InnerMaildirList,
+}
+
+impl MaildirMailboxList {
+    pub fn new(root: impl AsRef<Path>) -> Self {
+        trace!("prepare Maildir mailbox listing");
+        Self {
+            inner: InnerMaildirList::new(root),
+        }
+    }
+
+    pub fn resume(&mut self, arg: Option<MaildirMailboxListArg>) -> MaildirMailboxListResult {
+        use io_maildir::coroutines::maildir_list::MaildirListResult;
+
+        let inner_arg =
+            arg.map(|MaildirMailboxListArg::DirRead(entries)| MaildirListArg::DirRead(entries));
+
+        match self.inner.resume(inner_arg) {
+            MaildirListResult::WantsDirRead(paths) => MaildirMailboxListResult::WantsDirRead(paths),
+            MaildirListResult::Ok(maildirs) => {
+                let mut mailboxes: Vec<Mailbox> = maildirs.into_iter().map(Mailbox::from).collect();
+                mailboxes.sort_by(|a, b| a.name.cmp(&b.name));
+                MaildirMailboxListResult::Ok(mailboxes)
+            }
+            MaildirListResult::Err(err) => MaildirMailboxListResult::Err(err),
+        }
+    }
 }
 
 impl From<Maildir> for Mailbox {
     fn from(maildir: Maildir) -> Self {
         let name = maildir.name().unwrap_or("").to_string();
-
         Self {
             id: name.clone(),
             name,

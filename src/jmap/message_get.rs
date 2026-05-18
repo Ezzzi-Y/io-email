@@ -1,6 +1,6 @@
 //! JMAP message get (`Email/get` + `Blob/download`), wrapping a private
-//! orchestrator that resolves the message blob id then downloads its
-//! raw RFC 5322 bytes.
+//! orchestrator. Resolves the message blob id, then downloads its raw
+//! RFC 5322 bytes.
 
 use core::mem;
 
@@ -25,10 +25,10 @@ use secrecy::SecretString;
 use thiserror::Error;
 use url::Url;
 
-/// Errors produced while orchestrating `Email/get` + `Blob/download`
-/// for JMAP raw message retrieval.
+/// Errors produced while orchestrating Email/get + Blob/download for
+/// JMAP raw message retrieval.
 #[derive(Debug, Error)]
-pub enum MessageGetError {
+pub enum JmapMessageGetError {
     #[error(transparent)]
     EmailGet(#[from] JmapEmailGetError),
     #[error(transparent)]
@@ -45,42 +45,38 @@ pub enum MessageGetError {
     AlreadyDone,
 }
 
-/// Result returned by [`MessageGet::resume`].
+/// Result returned by [`JmapMessageGet::resume`].
 #[derive(Debug)]
-pub enum MessageGetResult {
+pub enum JmapMessageGetResult {
     Ok(Vec<u8>),
     WantsRead,
     WantsWrite(Vec<u8>),
-    Err(MessageGetError),
+    Err(JmapMessageGetError),
 }
 
-/// I/O-free coroutine wrapping `Email/get` + `Blob/download`. Returns
-/// the raw RFC 5322 bytes on completion.
-pub struct MessageGet {
-    inner: Inner,
-    pending: Option<PendingDownload>,
-}
-
-struct PendingDownload {
-    download_url_template: String,
-    account_id: String,
-    http_auth: SecretString,
-}
-
-enum Inner {
-    GettingEmail(JmapEmailGet),
+enum State {
+    GettingEmail {
+        get: JmapEmailGet,
+        download_url_template: String,
+        account_id: String,
+        http_auth: SecretString,
+    },
     Downloading(JmapBlobDownload),
     Done,
 }
 
-impl MessageGet {
-    /// Builds the orchestrator from a JMAP session, the bearer/basic
-    /// HTTP credential and the email id to download.
+/// I/O-free coroutine wrapping `Email/get` + `Blob/download`. Returns
+/// raw RFC 5322 bytes.
+pub struct JmapMessageGet {
+    state: State,
+}
+
+impl JmapMessageGet {
     pub fn new(
         session: &JmapSession,
         http_auth: &SecretString,
         email_id: impl ToString,
-    ) -> Result<Self, MessageGetError> {
+    ) -> Result<Self, JmapMessageGetError> {
         trace!("prepare JMAP message get");
 
         let get = JmapEmailGet::new(
@@ -93,93 +89,96 @@ impl MessageGet {
             0,
         )?;
 
-        let pending = PendingDownload {
-            download_url_template: session.download_url.clone(),
-            account_id: session
-                .primary_accounts
-                .get(capabilities::MAIL)
-                .cloned()
-                .unwrap_or_default(),
-            http_auth: http_auth.clone(),
-        };
+        let account_id = session
+            .primary_accounts
+            .get(capabilities::MAIL)
+            .cloned()
+            .unwrap_or_default();
 
         Ok(Self {
-            inner: Inner::GettingEmail(get),
-            pending: Some(pending),
+            state: State::GettingEmail {
+                get,
+                download_url_template: session.download_url.clone(),
+                account_id,
+                http_auth: http_auth.clone(),
+            },
         })
     }
 
-    /// Advances the orchestrator. Drives Email/get first, then
-    /// Blob/download.
-    pub fn resume(&mut self, arg: Option<&[u8]>) -> MessageGetResult {
-        let mut input = arg;
-
+    pub fn resume(&mut self, mut arg: Option<&[u8]>) -> JmapMessageGetResult {
         loop {
-            let inner = mem::replace(&mut self.inner, Inner::Done);
-
-            match inner {
-                Inner::GettingEmail(mut get) => match get.resume(input.take()) {
+            match mem::replace(&mut self.state, State::Done) {
+                State::GettingEmail {
+                    mut get,
+                    download_url_template,
+                    account_id,
+                    http_auth,
+                } => match get.resume(arg.take()) {
                     JmapEmailGetResult::WantsRead => {
-                        self.inner = Inner::GettingEmail(get);
-                        return MessageGetResult::WantsRead;
+                        self.state = State::GettingEmail {
+                            get,
+                            download_url_template,
+                            account_id,
+                            http_auth,
+                        };
+                        return JmapMessageGetResult::WantsRead;
                     }
                     JmapEmailGetResult::WantsWrite(bytes) => {
-                        self.inner = Inner::GettingEmail(get);
-                        return MessageGetResult::WantsWrite(bytes);
+                        self.state = State::GettingEmail {
+                            get,
+                            download_url_template,
+                            account_id,
+                            http_auth,
+                        };
+                        return JmapMessageGetResult::WantsWrite(bytes);
                     }
-                    JmapEmailGetResult::Err(err) => return MessageGetResult::Err(err.into()),
+                    JmapEmailGetResult::Err(err) => return JmapMessageGetResult::Err(err.into()),
                     JmapEmailGetResult::Ok { mut emails, .. } => {
                         let Some(email) = emails.pop() else {
-                            return MessageGetResult::Err(MessageGetError::EmailNotFound);
+                            return JmapMessageGetResult::Err(JmapMessageGetError::EmailNotFound);
                         };
 
                         let Some(blob_id) = email.blob_id else {
-                            return MessageGetResult::Err(MessageGetError::MissingBlobId);
+                            return JmapMessageGetResult::Err(JmapMessageGetError::MissingBlobId);
                         };
 
-                        let pending = self
-                            .pending
-                            .take()
-                            .expect("pending download set on construct");
-
-                        let url_str = resolve_download_url(
-                            &pending.download_url_template,
-                            &pending.account_id,
-                            &blob_id,
-                        );
+                        let url_str =
+                            resolve_download_url(&download_url_template, &account_id, &blob_id);
 
                         let url = match Url::parse(&url_str) {
                             Ok(u) => u,
                             Err(_) => {
-                                return MessageGetResult::Err(MessageGetError::InvalidDownloadUrl(
-                                    url_str,
-                                ));
+                                return JmapMessageGetResult::Err(
+                                    JmapMessageGetError::InvalidDownloadUrl(url_str),
+                                );
                             }
                         };
 
-                        let download = JmapBlobDownload::new(&pending.http_auth, &url);
-                        self.inner = Inner::Downloading(download);
+                        let download = JmapBlobDownload::new(&http_auth, &url);
+                        self.state = State::Downloading(download);
                     }
                 },
-                Inner::Downloading(mut download) => match download.resume(input.take()) {
+                State::Downloading(mut download) => match download.resume(arg.take()) {
                     JmapBlobDownloadResult::WantsRead => {
-                        self.inner = Inner::Downloading(download);
-                        return MessageGetResult::WantsRead;
+                        self.state = State::Downloading(download);
+                        return JmapMessageGetResult::WantsRead;
                     }
                     JmapBlobDownloadResult::WantsWrite(bytes) => {
-                        self.inner = Inner::Downloading(download);
-                        return MessageGetResult::WantsWrite(bytes);
+                        self.state = State::Downloading(download);
+                        return JmapMessageGetResult::WantsWrite(bytes);
                     }
                     JmapBlobDownloadResult::WantsRedirect { .. } => {
-                        return MessageGetResult::Err(MessageGetError::UnsupportedRedirect);
+                        return JmapMessageGetResult::Err(JmapMessageGetError::UnsupportedRedirect);
                     }
-                    JmapBlobDownloadResult::Err(err) => return MessageGetResult::Err(err.into()),
+                    JmapBlobDownloadResult::Err(err) => {
+                        return JmapMessageGetResult::Err(err.into());
+                    }
                     JmapBlobDownloadResult::Ok { data, .. } => {
-                        return MessageGetResult::Ok(data);
+                        return JmapMessageGetResult::Ok(data);
                     }
                 },
-                Inner::Done => {
-                    return MessageGetResult::Err(MessageGetError::AlreadyDone);
+                State::Done => {
+                    return JmapMessageGetResult::Err(JmapMessageGetError::AlreadyDone);
                 }
             }
         }

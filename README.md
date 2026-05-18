@@ -1,61 +1,54 @@
 # I/O Email [![Documentation](https://img.shields.io/docsrs/io-email?style=flat&logo=docs.rs&logoColor=white)](https://docs.rs/io-email/latest/io_email) [![Matrix](https://img.shields.io/badge/chat-%23pimalaya-blue?style=flat&logo=matrix&logoColor=white)](https://matrix.to/#/#pimalaya:matrix.org) [![Mastodon](https://img.shields.io/badge/news-%40pimalaya-blue?style=flat&logo=mastodon&logoColor=white)](https://fosstodon.org/@pimalaya)
 
-Email client library, written in Rust
+Email client library, written in Rust.
 
 ## Table of contents
 
 - [Features](#features)
-- [Backend coverage](#backend-coverage)
-- [Examples](#examples)
+- [Usage](#usage)
   - [As a no-std coroutine library](#as-a-no-std-coroutine-library)
   - [As a std client](#as-a-std-client)
-- [More examples](#more-examples)
+- [Real world usage](#real-world-usage)
 - [License](#license)
 - [Social](#social)
 - [Sponsoring](#sponsoring)
 
 ## Features
 
-- **Shared types**: a strict least-common-denominator data model (`Mailbox`, `Envelope`, `Address`, `Flag`) that fits IMAP, JMAP, Maildir and SMTP at once. Backend-specific fields (IMAP `SPECIAL-USE` attributes, JMAP roles and rights, Maildir paths, …) intentionally stay on the per-protocol crates.
-- **I/O-free** coroutines per backend: each shared operation is exposed as a per-backend coroutine (e.g. `io_email::imap::mailbox_list::MailboxList`) that wraps the underlying `io-imap` / `io-jmap` / `io-maildir` state machine and produces shared types on completion. No sockets, no async runtime, no `std` required by the protocol layer.
-- **Standard, blocking unified client** (requires `client` feature): `EmailClientStd` is a sum type over the per-backend std clients (`ImapClientStd`, `JmapClientStd`, `MaildirClient`, `SmtpClientStd`). After construction, callers see one type and one method set: `list_mailboxes`, `list_envelopes`, `add_flags` / `set_flags` / `delete_flags`, `get_message`, `add_message`, `copy_messages`, `move_messages`, `send_message`. Operations a backend cannot perform return `UnsupportedOperation` instead of being hidden behind a trait bound.
-- **Backend selection** via cargo features: `imap`, `jmap`, `maildir`, `smtp` (all on by default). Construction stays asymmetric on purpose: each backend has its own connect story (URLs, TLS, sessions, paths), so an `EmailClientStd` is built from a fully-initialised per-backend client via `From` impls.
-
-*The `io-email` library is written in [Rust](https://www.rust-lang.org/), and relies on [cargo features](https://doc.rust-lang.org/cargo/reference/features.html) to enable or disable functionalities. Default features can be found in the `features` section of the [`Cargo.toml`](https://github.com/pimalaya/io-email/blob/master/Cargo.toml), or on [docs.rs](https://docs.rs/crate/io-email/latest/features).*
-
-## Backend coverage
-
-The shared operations exposed on `EmailClientStd`, and which backends implement them. Anything not listed remains accessible on the inner per-backend client by pattern-matching the enum.
+- Shared least-common-denominator types (`Mailbox`, `Envelope`, `Address`, `Flag`) that fit IMAP, JMAP, Maildir and SMTP.
+- One I/O-free coroutine per backend / operation, wrapping the underlying [io-imap] / [io-jmap] / [io-maildir] / [io-smtp] state machine and producing shared types on completion.
+- `EmailClientStd` (feature `client`): blocking unified client over all enabled backends.
 
 | Operation         | IMAP | JMAP | Maildir | SMTP |
 |-------------------|:----:|:----:|:-------:|:----:|
-| `list_mailboxes`  |  yes |  yes |   yes   |  no  |
-| `list_envelopes`  |  yes |  yes |   yes   |  no  |
-| `get_message`     |  yes |  yes |   yes   |  no  |
-| `add_message`     |  yes |  yes |   yes   |  no  |
-| `add_flags`       |  yes |  yes |   yes   |  no  |
-| `set_flags`       |  yes |  yes |   yes   |  no  |
-| `delete_flags`    |  yes |  yes |   yes   |  no  |
-| `copy_messages`   |  yes |  yes |   yes   |  no  |
-| `move_messages`   |  yes |  yes |   yes   |  no  |
-| `send_message`    |  no  |  yes |    no   |  yes |
+| `list_mailboxes`  |  yes |  yes |   yes   |      |
+| `list_envelopes`  |  yes |  yes |   yes   |      |
+| `get_message`     |  yes |  yes |   yes   |      |
+| `add_message`     |  yes |  yes |   yes   |      |
+| `add_flags`       |  yes |  yes |   yes   |      |
+| `set_flags`       |  yes |  yes |   yes   |      |
+| `delete_flags`    |  yes |  yes |   yes   |      |
+| `copy_messages`   |  yes |  yes |   yes   |      |
+| `move_messages`   |  yes |  yes |   yes   |      |
+| `send_message`    |      |  yes |         |  yes |
 
-For protocol-level capabilities (RFC and SASL coverage, wire format, …), see the per-backend crates: [io-imap], [io-jmap], [io-maildir], [io-smtp].
+*The `io-email` library is written in [Rust](https://www.rust-lang.org/), and relies on [cargo features](https://doc.rust-lang.org/cargo/reference/features.html) to enable or disable functionalities. Default features can be found in the `features` section of the [`Cargo.toml`](https://github.com/pimalaya/io-imap/blob/master/Cargo.toml), or on [docs.rs](https://docs.rs/crate/io-imap/latest/features).*
 
 [io-imap]: https://github.com/pimalaya/io-imap
 [io-jmap]: https://github.com/pimalaya/io-jmap
 [io-maildir]: https://github.com/pimalaya/io-maildir
 [io-smtp]: https://github.com/pimalaya/io-smtp
 
-## Examples
-
-`io-email` can be consumed two ways, depending on how much of the I/O stack you want to own.
+## Usage
 
 ### As a no-std coroutine library
 
-No `client` feature required: works in `#![no_std]`, no sockets, no async runtime. Each shared operation has a per-backend coroutine that wraps the underlying `io-imap` / `io-jmap` / `io-maildir` state machine and produces a shared type (e.g. `Vec<Mailbox>`) on completion. You own the loop and the bytes; the library only produces command bytes and consumes server responses.
+```toml,ignore
+[dependencies]
+io-email = "0.0.1"
+```
 
-List every IMAP mailbox against a blocking TCP socket, producing the shared `Mailbox` type:
+List IMAP mailboxes over a blocking TCP socket:
 
 ```rust,ignore
 use std::{io::{Read, Write}, net::TcpStream};
@@ -66,26 +59,22 @@ use io_imap::context::ImapContext;
 let mut stream = TcpStream::connect("imap.example.com:143").unwrap();
 let mut buf = [0u8; 16 * 1024];
 
-// Assumes the caller has already driven the greeting + login coroutines
-// on this stream (see io-imap). `ImapContext` is then the authenticated
-// session state.
 let context = ImapContext::new();
-
-let mut coroutine = MailboxList::new(context);
+let mut coroutine = ImapMailboxList::new(context);
 let mut arg: Option<&[u8]> = None;
 
 let mailboxes = loop {
     match coroutine.resume(arg.take()) {
-        MailboxListResult::Ok(mailboxes) => break mailboxes,
-        MailboxListResult::WantsRead => {
+        ImapMailboxListResult::Ok(mailboxes) => break mailboxes,
+        ImapMailboxListResult::WantsRead => {
             let n = stream.read(&mut buf).unwrap();
             arg = Some(&buf[..n]);
         }
-        MailboxListResult::WantsWrite(bytes) => {
+        ImapMailboxListResult::WantsWrite(bytes) => {
             stream.write_all(&bytes).unwrap();
             arg = None;
         }
-        MailboxListResult::Err(err) => panic!("{err}"),
+        ImapMailboxListResult::Err(err) => panic!("{err}"),
     }
 };
 
@@ -94,18 +83,14 @@ for mbox in mailboxes {
 }
 ```
 
-The same pattern applies to every `io_email::{imap,jmap,maildir}::*` module: `MailboxList`, `EnvelopeList`, `MessageGet`, `MessageAdd`, `MessageCopy`, `MessageMove`, `FlagAdd`, `FlagSet`, `FlagDelete`. JMAP coroutines additionally surface a `WantsRedirect { url, .. }` shape, Maildir coroutines use filesystem `Wants*` variants (`WantsDirRead`, `WantsFileCreate`, `WantsRename`, …); see the [io-jmap](https://github.com/pimalaya/io-jmap) and [io-maildir](https://github.com/pimalaya/io-maildir) READMEs for the result-enum shapes.
+JMAP coroutines also surface `WantsRedirect { url, .. }`; Maildir coroutines use filesystem variants (`WantsDirRead`, `WantsFileCreate`, `WantsRename`, ...).
 
 ### As a std client
 
-Enable the `client` feature (on by default). `EmailClientStd` is a sum type over the per-backend std clients; construction goes through each backend's own `connect` / `new` story, then a `From` impl lifts it into the unified client.
-
 ```toml,ignore
 [dependencies]
-io-email = { version = "0.0.1", features = ["client", "imap", "jmap", "smtp", "maildir", "serde"] }
+io-email = { version = "0.0.1", features = ["client", "imap", "rustls-ring"] }
 ```
-
-Connect to IMAP, list mailboxes through the shared API:
 
 ```rust,ignore
 use io_email::client::EmailClientStd;
@@ -122,82 +107,28 @@ let sasl = SaslLogin {
 };
 
 let imap = ImapClientStd::connect(&url, &tls, false, Some(sasl))?;
-let mut client: EmailClientStd = imap.into();
+let mut client = EmailClientStd::from(imap);
 
 for mbox in client.list_mailboxes(true)? {
     println!("{}: total={:?} unread={:?}", mbox.name, mbox.total, mbox.unread);
 }
 ```
 
-Swap the backend without changing the call site. Pointing the same code at a local Maildir:
+Same call site against Maildir:
 
 ```rust,ignore
 use io_email::client::EmailClientStd;
 use io_maildir::client::MaildirClient;
 
 let maildir = MaildirClient::new("/home/alice/Maildir");
-let mut client: EmailClientStd = maildir.into();
+let mut client = EmailClientStd::from(maildir);
 
 for mbox in client.list_mailboxes(true)? {
     println!("{}: total={:?} unread={:?}", mbox.name, mbox.total, mbox.unread);
 }
 ```
 
-Or at JMAP, after running session discovery on the per-backend client:
-
-```rust,ignore
-use io_email::client::EmailClientStd;
-use io_jmap::client::JmapClientStd;
-use pimalaya_stream::tls::Tls;
-use secrecy::SecretString;
-use url::Url;
-
-let http_auth = SecretString::from("Bearer your-token-here");
-let session_url = Url::parse("https://api.fastmail.com/jmap/session/")?;
-let tls = Tls::default();
-
-let mut jmap = JmapClientStd::connect(&session_url, &tls, http_auth)?;
-jmap.session_get(&session_url)?;
-
-let mut client: EmailClientStd = jmap.into();
-
-for mbox in client.list_mailboxes(true)? {
-    println!("{}: total={:?} unread={:?}", mbox.name, mbox.total, mbox.unread);
-}
-```
-
-Sending a message requires an SMTP or JMAP backend:
-
-```rust,ignore
-use io_email::client::EmailClientStd;
-use io_smtp::{
-    client::SmtpClientStd,
-    rfc5321::types::{domain::Domain, ehlo_domain::EhloDomain},
-};
-use pimalaya_stream::{sasl::SaslPlain, tls::Tls};
-use secrecy::SecretString;
-use url::Url;
-
-let url = Url::parse("smtps://smtp.example.com")?;
-let tls = Tls::default();
-let domain: EhloDomain<'_> = Domain::parse(b"localhost")?.into();
-let sasl = SaslPlain {
-    authzid: None,
-    authcid: "alice@example.com".into(),
-    passwd: SecretString::from("hunter2".to_owned()),
-};
-
-let smtp = SmtpClientStd::connect(&url, &tls, false, domain, Some(sasl))?;
-let mut client: EmailClientStd = smtp.into();
-
-let raw =
-    b"From: alice@example.com\r\nTo: bob@example.com\r\nSubject: Test\r\n\r\nHello!".to_vec();
-client.send_message(raw, "alice@example.com", &["bob@example.com"])?;
-```
-
-Operations the active backend cannot perform return `EmailClientStdError::UnsupportedOperation`; backend-specific operations stay reachable on the inner client by pattern-matching the enum.
-
-## More examples
+## Real world usage
 
 Have a look at projects built on top of this library:
 

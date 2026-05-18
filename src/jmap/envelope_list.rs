@@ -1,6 +1,5 @@
 //! JMAP envelope listing (`Email/query` + `Email/get`), wrapping
-//! [`io_jmap::rfc8621::email_query::JmapEmailQuery`] and producing the
-//! shared [`Envelope`] type on completion.
+//! [`io_jmap::rfc8621::email_query::JmapEmailQuery`].
 
 use alloc::vec::Vec;
 
@@ -17,17 +16,23 @@ use secrecy::SecretString;
 
 use crate::{address::Address, envelope::Envelope, flag::Flag};
 
+/// Result returned by [`JmapEnvelopeList::resume`].
+#[derive(Debug)]
+pub enum JmapEnvelopeListResult {
+    Ok(Vec<Envelope>),
+    WantsRead,
+    WantsWrite(Vec<u8>),
+    Err(JmapEmailQueryError),
+}
+
 /// I/O-free coroutine listing JMAP envelopes for the session's primary
-/// mail account. Issues `Email/query` + `Email/get` in a single
-/// batched request.
-pub struct EnvelopeList {
+/// mail account; one batched `Email/query` + `Email/get` request.
+pub struct JmapEnvelopeList {
     inner: JmapEmailQuery,
 }
 
-impl EnvelopeList {
-    /// Builds the coroutine from a JMAP session and the bearer/basic
-    /// HTTP credential. `page` is 1-indexed; pass `page_size = None`
-    /// to let the server return its full page.
+impl JmapEnvelopeList {
+    /// `page` is 1-indexed; `page_size = None` lets the server pick.
     pub fn new(
         session: &JmapSession,
         http_auth: &SecretString,
@@ -48,32 +53,19 @@ impl EnvelopeList {
         Ok(Self { inner })
     }
 
-    /// Advances the coroutine.
-    pub fn resume(&mut self, arg: Option<&[u8]>) -> EnvelopeListResult {
+    pub fn resume(&mut self, arg: Option<&[u8]>) -> JmapEnvelopeListResult {
         match self.inner.resume(arg) {
-            JmapEmailQueryResult::WantsRead => EnvelopeListResult::WantsRead,
-            JmapEmailQueryResult::WantsWrite(bytes) => EnvelopeListResult::WantsWrite(bytes),
+            JmapEmailQueryResult::WantsRead => JmapEnvelopeListResult::WantsRead,
+            JmapEmailQueryResult::WantsWrite(bytes) => JmapEnvelopeListResult::WantsWrite(bytes),
             JmapEmailQueryResult::Ok { emails, .. } => {
                 let envelopes = emails.into_iter().map(Envelope::from).collect();
-                EnvelopeListResult::Ok(envelopes)
+                JmapEnvelopeListResult::Ok(envelopes)
             }
-            JmapEmailQueryResult::Err(err) => EnvelopeListResult::Err(err),
+            JmapEmailQueryResult::Err(err) => JmapEnvelopeListResult::Err(err),
         }
     }
 }
 
-/// Result returned by [`EnvelopeList::resume`].
-#[derive(Debug)]
-pub enum EnvelopeListResult {
-    Ok(Vec<Envelope>),
-    WantsRead,
-    WantsWrite(Vec<u8>),
-    Err(JmapEmailQueryError),
-}
-
-/// Translates 1-indexed `(page, page_size)` into JMAP `(position,
-/// limit)`. `position = (page - 1) * page_size`; both stay `None`
-/// when no page size is requested.
 fn compute_position_limit(page: Option<u32>, page_size: Option<u32>) -> (Option<u64>, Option<u64>) {
     let Some(size) = page_size else {
         return (None, None);
@@ -86,10 +78,8 @@ fn compute_position_limit(page: Option<u32>, page_size: Option<u32>) -> (Option<
 }
 
 /// Properties requested from `Email/get` to populate an [`Envelope`].
-///
-/// Notably we ask for `sentAt` (the parsed `Date:` header) and not
-/// `receivedAt`: the shared envelope uses author-claimed time, which
-/// is consistent across backends.
+/// Uses `sentAt` (author-claimed `Date:`) rather than `receivedAt` for
+/// cross-backend consistency.
 pub fn envelope_properties() -> Vec<EmailProperty> {
     vec![
         EmailProperty::Id,

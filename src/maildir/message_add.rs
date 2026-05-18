@@ -5,24 +5,39 @@ use alloc::{collections::BTreeMap, string::String, vec::Vec};
 
 use io_maildir::{
     coroutines::message_store::{
-        MaildirMessageStore, MaildirMessageStoreArg, MaildirMessageStoreError,
-        MaildirMessageStoreResult,
+        MaildirMessageStore as InnerMaildirMessageStore, MaildirMessageStoreArg as InnerArg,
+        MaildirMessageStoreError, MaildirMessageStoreResult as InnerResult,
     },
     flag::Flags,
     maildir::{Maildir, MaildirSubdir},
 };
 use log::trace;
 
-/// I/O-free coroutine writing a raw RFC 5322 message into a Maildir
-/// under the requested `subdir`. Follows the standard maildir
-/// delivery protocol (write to `tmp`, then rename into place).
-pub struct MessageAdd {
-    inner: MaildirMessageStore,
+/// Argument fed back to [`MaildirMessageAdd::resume`].
+#[derive(Debug)]
+pub enum MaildirMessageAddArg {
+    FileCreate,
+    Rename,
 }
 
-impl MessageAdd {
-    /// Builds the coroutine. Pass `subdir = None` to default to
-    /// [`MaildirSubdir::Cur`] (visible as a "read" message).
+/// Result returned by [`MaildirMessageAdd::resume`].
+#[derive(Debug)]
+pub enum MaildirMessageAddResult {
+    Ok { id: String, path: String },
+    WantsFileCreate(BTreeMap<String, Vec<u8>>),
+    WantsRename(Vec<(String, String)>),
+    Err(MaildirMessageStoreError),
+}
+
+/// I/O-free coroutine writing a raw RFC 5322 message into a Maildir.
+/// Follows the standard maildir delivery protocol (write to `tmp`,
+/// then rename).
+pub struct MaildirMessageAdd {
+    inner: InnerMaildirMessageStore,
+}
+
+impl MaildirMessageAdd {
+    /// Pass `subdir = None` to default to [`MaildirSubdir::Cur`].
     pub fn new(
         maildir: Maildir,
         subdir: Option<MaildirSubdir>,
@@ -32,50 +47,24 @@ impl MessageAdd {
         trace!("prepare Maildir message add");
         let subdir = subdir.unwrap_or(MaildirSubdir::Cur);
         Self {
-            inner: MaildirMessageStore::new(maildir, subdir, flags, contents),
+            inner: InnerMaildirMessageStore::new(maildir, subdir, flags, contents),
         }
     }
 
-    /// Advances the coroutine.
-    pub fn resume(&mut self, arg: Option<MessageAddArg>) -> MessageAddResult {
+    pub fn resume(&mut self, arg: Option<MaildirMessageAddArg>) -> MaildirMessageAddResult {
         let inner_arg = arg.map(|arg| match arg {
-            MessageAddArg::FileCreate => MaildirMessageStoreArg::FileCreate,
-            MessageAddArg::Rename => MaildirMessageStoreArg::Rename,
+            MaildirMessageAddArg::FileCreate => InnerArg::FileCreate,
+            MaildirMessageAddArg::Rename => InnerArg::Rename,
         });
 
         match self.inner.resume(inner_arg) {
-            MaildirMessageStoreResult::Ok { id, path } => MessageAddResult::Ok {
+            InnerResult::Ok { id, path } => MaildirMessageAddResult::Ok {
                 id,
                 path: path.to_string_lossy().into_owned(),
             },
-            MaildirMessageStoreResult::WantsFileCreate(files) => {
-                MessageAddResult::WantsFileCreate(files)
-            }
-            MaildirMessageStoreResult::WantsRename(pairs) => MessageAddResult::WantsRename(pairs),
-            MaildirMessageStoreResult::Err(err) => MessageAddResult::Err(err),
+            InnerResult::WantsFileCreate(files) => MaildirMessageAddResult::WantsFileCreate(files),
+            InnerResult::WantsRename(pairs) => MaildirMessageAddResult::WantsRename(pairs),
+            InnerResult::Err(err) => MaildirMessageAddResult::Err(err),
         }
     }
-}
-
-/// Result returned by [`MessageAdd::resume`].
-#[derive(Debug)]
-pub enum MessageAddResult {
-    Ok {
-        /// Maildir filename id of the newly-stored message.
-        id: String,
-        /// Final on-disk path.
-        path: String,
-    },
-    WantsFileCreate(BTreeMap<String, Vec<u8>>),
-    WantsRename(Vec<(String, String)>),
-    Err(MaildirMessageStoreError),
-}
-
-/// Argument fed back to [`MessageAdd::resume`].
-#[derive(Debug)]
-pub enum MessageAddArg {
-    /// Response to [`MessageAddResult::WantsFileCreate`].
-    FileCreate,
-    /// Response to [`MessageAddResult::WantsRename`].
-    Rename,
 }

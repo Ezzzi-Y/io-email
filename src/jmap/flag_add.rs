@@ -1,5 +1,5 @@
-//! JMAP flag add (`Email/set` with `keywords/<name>: true` patches),
-//! wrapping [`io_jmap::rfc8621::email_set::JmapEmailSet`].
+//! JMAP flag add (`Email/set` with `keywords/<name>: true`), wrapping
+//! [`io_jmap::rfc8621::email_set::JmapEmailSet`].
 
 use alloc::{string::String, vec::Vec};
 
@@ -10,14 +10,21 @@ use io_jmap::{
 use log::trace;
 use secrecy::SecretString;
 
-/// I/O-free coroutine adding keywords (flags) to a set of emails.
-pub struct FlagAdd {
+/// Result returned by [`JmapFlagAdd::resume`].
+#[derive(Debug)]
+pub enum JmapFlagAddResult {
+    Ok,
+    WantsRead,
+    WantsWrite(Vec<u8>),
+    Err(JmapEmailSetError),
+}
+
+/// I/O-free coroutine adding keywords to a set of emails.
+pub struct JmapFlagAdd {
     inner: JmapEmailSet,
 }
 
-impl FlagAdd {
-    /// Builds the coroutine from a JMAP session, the bearer/basic HTTP
-    /// credential, and the `(email_id, keyword)` pairs to set.
+impl JmapFlagAdd {
     pub fn new<I, J>(
         session: &JmapSession,
         http_auth: &SecretString,
@@ -41,22 +48,12 @@ impl FlagAdd {
         Ok(Self { inner })
     }
 
-    /// Advances the coroutine.
-    pub fn resume(&mut self, arg: Option<&[u8]>) -> FlagAddResult {
+    pub fn resume(&mut self, arg: Option<&[u8]>) -> JmapFlagAddResult {
         match self.inner.resume(arg) {
-            JmapEmailSetResult::WantsRead => FlagAddResult::WantsRead,
-            JmapEmailSetResult::WantsWrite(bytes) => FlagAddResult::WantsWrite(bytes),
-            JmapEmailSetResult::Ok { .. } => FlagAddResult::Ok,
-            JmapEmailSetResult::Err(err) => FlagAddResult::Err(err),
+            JmapEmailSetResult::WantsRead => JmapFlagAddResult::WantsRead,
+            JmapEmailSetResult::WantsWrite(bytes) => JmapFlagAddResult::WantsWrite(bytes),
+            JmapEmailSetResult::Ok { .. } => JmapFlagAddResult::Ok,
+            JmapEmailSetResult::Err(err) => JmapFlagAddResult::Err(err),
         }
     }
-}
-
-/// Result returned by [`FlagAdd::resume`].
-#[derive(Debug)]
-pub enum FlagAddResult {
-    Ok,
-    WantsRead,
-    WantsWrite(Vec<u8>),
-    Err(JmapEmailSetError),
 }

@@ -378,7 +378,7 @@ dependencies = [
 [[package]]
 name = "io-http"
 version = "0.0.3"
-source = "git+https://github.com/pimalaya/io-http#5fa0c92a19b9df60680f52701a5f9a30429dd2f4"
+source = "git+https://github.com/pimalaya/io-http#c8833e8c4c72f6e87f6d2a0e3b907e657384e197"
 dependencies = [
  "base64",
  "httparse",

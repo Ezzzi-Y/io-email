@@ -9,22 +9,37 @@ use alloc::{
 
 use io_maildir::{
     coroutines::message_move::{
-        MaildirMessageMove, MaildirMessageMoveArg, MaildirMessageMoveError,
-        MaildirMessageMoveResult,
+        MaildirMessageMove as InnerMaildirMessageMove, MaildirMessageMoveArg as InnerArg,
+        MaildirMessageMoveError, MaildirMessageMoveResult as InnerResult,
     },
     maildir::{Maildir, MaildirSubdir},
 };
 use log::trace;
 
-/// I/O-free coroutine moving a single Maildir message into another
-/// Maildir, preserving the source subdir by default.
-pub struct MessageMove {
-    inner: MaildirMessageMove,
+/// Argument fed back to [`MaildirMessageMove::resume`].
+#[derive(Debug)]
+pub enum MaildirMessageMoveArg {
+    DirRead(BTreeMap<String, BTreeSet<String>>),
+    Rename,
 }
 
-impl MessageMove {
-    /// Builds the coroutine. `target_subdir` of `None` reuses the
-    /// source subdir (`cur` / `new` / `tmp`).
+/// Result returned by [`MaildirMessageMove::resume`].
+#[derive(Debug)]
+pub enum MaildirMessageMoveResult {
+    Ok,
+    WantsDirRead(BTreeSet<String>),
+    WantsRename(Vec<(String, String)>),
+    Err(MaildirMessageMoveError),
+}
+
+/// I/O-free coroutine moving a single Maildir message into another
+/// Maildir, preserving the source subdir by default.
+pub struct MaildirMessageMove {
+    inner: InnerMaildirMessageMove,
+}
+
+impl MaildirMessageMove {
+    /// `target_subdir = None` reuses the source subdir.
     pub fn new(
         id: impl ToString,
         source: Maildir,
@@ -33,41 +48,21 @@ impl MessageMove {
     ) -> Self {
         trace!("prepare Maildir message move");
         Self {
-            inner: MaildirMessageMove::new(id, source, target, target_subdir),
+            inner: InnerMaildirMessageMove::new(id, source, target, target_subdir),
         }
     }
 
-    /// Advances the coroutine.
-    pub fn resume(&mut self, arg: Option<MessageMoveArg>) -> MessageMoveResult {
+    pub fn resume(&mut self, arg: Option<MaildirMessageMoveArg>) -> MaildirMessageMoveResult {
         let inner_arg = arg.map(|arg| match arg {
-            MessageMoveArg::DirRead(entries) => MaildirMessageMoveArg::DirRead(entries),
-            MessageMoveArg::Rename => MaildirMessageMoveArg::Rename,
+            MaildirMessageMoveArg::DirRead(entries) => InnerArg::DirRead(entries),
+            MaildirMessageMoveArg::Rename => InnerArg::Rename,
         });
 
         match self.inner.resume(inner_arg) {
-            MaildirMessageMoveResult::Ok => MessageMoveResult::Ok,
-            MaildirMessageMoveResult::WantsDirRead(paths) => MessageMoveResult::WantsDirRead(paths),
-            MaildirMessageMoveResult::WantsRename(pairs) => MessageMoveResult::WantsRename(pairs),
-            MaildirMessageMoveResult::Err(err) => MessageMoveResult::Err(err),
+            InnerResult::Ok => MaildirMessageMoveResult::Ok,
+            InnerResult::WantsDirRead(paths) => MaildirMessageMoveResult::WantsDirRead(paths),
+            InnerResult::WantsRename(pairs) => MaildirMessageMoveResult::WantsRename(pairs),
+            InnerResult::Err(err) => MaildirMessageMoveResult::Err(err),
         }
     }
-}
-
-/// Result returned by [`MessageMove::resume`].
-#[derive(Debug)]
-pub enum MessageMoveResult {
-    Ok,
-    WantsDirRead(BTreeSet<String>),
-    WantsRename(Vec<(String, String)>),
-    Err(MaildirMessageMoveError),
-}
-
-/// Argument fed back to [`MessageMove::resume`] after the caller
-/// performed the requested filesystem operation.
-#[derive(Debug)]
-pub enum MessageMoveArg {
-    /// Response to [`MessageMoveResult::WantsDirRead`].
-    DirRead(BTreeMap<String, BTreeSet<String>>),
-    /// Response to [`MessageMoveResult::WantsRename`].
-    Rename,
 }
