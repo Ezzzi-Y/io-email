@@ -19,7 +19,7 @@ rustdoc-args = ["--cfg", "docsrs"]
 [features]
 default = []
 client = ["pimalaya-stream/std", "io-imap?/client", "io-jmap?/client", "io-maildir?/client", "io-smtp?/client"]
-imap = ["dep:io-imap", "dep:mail-parser"]
+imap = ["dep:io-imap", "dep:mail-parser", "dep:rfc2047-decoder"]
 jmap = ["dep:io-jmap", "dep:mail-parser", "dep:secrecy", "dep:url"]
 smtp = ["dep:io-smtp"]
 maildir = ["client", "dep:io-maildir", "io-maildir?/client", "dep:mail-parser"]
@@ -28,7 +28,7 @@ serde = ["dep:serde", "chrono/serde", "mail-parser?/serde"]
 
 [dependencies]
 chrono = { version = "0.4", default-features = false, features = ["alloc"] }
-chumsky = { version = "=1.0.0-alpha.8", default-features = false, optional = true }
+chumsky = { version = "0.13", default-features = false, optional = true }
 io-imap = { version = "0.0.1", default-features = false, optional = true }
 io-jmap = { version = "0.0.1", default-features = false, optional = true }
 io-maildir = { version = "0.0.1", default-features = false, optional = true }
@@ -36,6 +36,7 @@ io-smtp = { version = "0.0.1", default-features = false, optional = true }
 log = { version = "0.4", default-features = false }
 mail-parser = { version = "0.11", optional = true }
 pimalaya-stream = { version = "0.0.1", default-features = false, optional = true }
+rfc2047-decoder = { version = "1", optional = true }
 secrecy = { version = "0.10", optional = true }
 serde = { version = "1", default-features = false, features = ["derive"], optional = true }
 thiserror = { version = "2", default-features = false }

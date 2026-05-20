@@ -3,7 +3,10 @@
 //! Parsers needed to build a [`SearchEmailsFilterQuery`] from a string
 //! slice. Based on [`chumsky`].
 
-use alloc::{boxed::Box, string::String};
+use alloc::{
+    boxed::Box,
+    string::{String, ToString},
+};
 
 use chrono::NaiveDate;
 use chumsky::prelude::*;
@@ -240,7 +243,7 @@ fn naive_date<'a>() -> impl Parser<'a, &'a str, NaiveDate, ParserError<'a>> + Cl
 
 fn naive_date_with_fmt(fmt: &str) -> impl Parser<'_, &str, NaiveDate, ParserError<'_>> + Clone {
     pattern().try_map(move |ref s, span| {
-        NaiveDate::parse_from_str(s, fmt).map_err(|err| Rich::custom(span, err))
+        NaiveDate::parse_from_str(s, fmt).map_err(|err| Rich::custom(span, err.to_string()))
     })
 }
 

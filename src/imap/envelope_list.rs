@@ -31,6 +31,7 @@ use io_imap::{
     },
 };
 use log::trace;
+use rfc2047_decoder::{Decoder, RecoverStrategy};
 use thiserror::Error;
 
 use crate::{address::Address, envelope::Envelope, flag::Flag};
@@ -288,7 +289,7 @@ pub(crate) fn envelope_from(seq: u32, items: Vec<MessageDataItem<'static>>) -> E
             }
             MessageDataItem::Envelope(env) => {
                 if let Some(s) = env.subject.into_option() {
-                    subject = bytes_to_string(s.as_ref());
+                    subject = decode_mime_bytes(s.as_ref());
                 }
                 if let Some(d) = env.date.into_option() {
                     let raw = bytes_to_string(d.as_ref());
@@ -335,7 +336,7 @@ fn address_from(addr: &ImapAddress<'_>) -> Address {
         .name
         .0
         .as_ref()
-        .map(|s| bytes_to_string(s.as_ref()))
+        .map(|s| decode_mime_bytes(s.as_ref()))
         .filter(|s| !s.is_empty());
 
     let mailbox = addr
@@ -407,4 +408,20 @@ fn bytes_to_string(bytes: &[u8]) -> String {
 
             out
         })
+}
+
+/// Decodes RFC 2047 MIME-encoded words (e.g. `=?utf-8?B?...?=`) that
+/// commonly appear in IMAP `ENVELOPE` subjects and address display
+/// names. Falls back to [`bytes_to_string`] when the input is not a
+/// well-formed encoded-word sequence; the decoder also retains literal
+/// runs that surround encoded tokens.
+fn decode_mime_bytes(bytes: &[u8]) -> String {
+    let decoder = Decoder::new().too_long_encoded_word_strategy(RecoverStrategy::Decode);
+    match decoder.decode(bytes) {
+        Ok(s) => s,
+        Err(err) => {
+            trace!("cannot decode RFC 2047 bytes: {err}");
+            bytes_to_string(bytes)
+        }
+    }
 }
