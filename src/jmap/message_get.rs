@@ -186,9 +186,13 @@ impl JmapMessageGet {
 }
 
 pub(crate) fn resolve_download_url(template: &str, account_id: &str, blob_id: &str) -> String {
+    // Use the RFC-suggested defaults for an `Email/get` raw blob
+    // download: MIME type `message/rfc822` (URL-encoded) and file name
+    // `message.eml`. Some providers (e.g. Fastmail) rely on the type
+    // hint to route the request to the correct download authority.
     template
         .replace("{accountId}", account_id)
         .replace("{blobId}", blob_id)
-        .replace("{type}", "application/octet-stream")
-        .replace("{name}", blob_id)
+        .replace("{type}", "message%2Frfc822")
+        .replace("{name}", "message.eml")
 }

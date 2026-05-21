@@ -14,6 +14,8 @@ use log::trace;
 #[cfg(any(feature = "imap", feature = "smtp"))]
 use pimalaya_stream::std::stream::StreamStd;
 use thiserror::Error;
+#[cfg(feature = "jmap")]
+use url::Url;
 
 #[cfg(feature = "search")]
 use crate::search::query::SearchEmailsQuery;
@@ -832,8 +834,11 @@ impl EmailClientStd {
     fn jmap_get_message(&mut self, id: &str) -> Result<Vec<u8>, EmailClientStdError> {
         use alloc::string::ToString;
 
-        use io_jmap::{client::JmapClientStdError, rfc8621::capabilities};
-        use url::Url;
+        use io_jmap::{
+            client::{JmapClientStd, JmapClientStdError},
+            rfc8621::capabilities,
+        };
+        use pimalaya_stream::{std::stream::StreamStd, tls::Tls};
 
         use crate::jmap::message_get::resolve_download_url;
 
@@ -867,9 +872,30 @@ impl EmailClientStd {
             .cloned()
             .unwrap_or_default();
         let url_str = resolve_download_url(&session.download_url, &account_id, &blob_id);
-        let url = Url::parse(&url_str).map_err(|_| EmailClientStdError::InvalidUrl(url_str))?;
+        let download_url =
+            Url::parse(&url_str).map_err(|_| EmailClientStdError::InvalidUrl(url_str))?;
 
-        Ok(client.blob_download(&url)?)
+        // Fastmail (and any provider where the API host differs from
+        // the download host) serves blobs from a separate authority.
+        // Reusing the existing API stream would issue the download GET
+        // against the API host and get redirected, which io-jmap
+        // surfaces as `UnexpectedRedirect`. When the authorities
+        // differ, open a dedicated stream just for the download.
+        if same_authority(&session.api_url, &download_url) {
+            return Ok(client.blob_download(&download_url)?);
+        }
+
+        let host = download_url
+            .host_str()
+            .ok_or_else(|| EmailClientStdError::InvalidUrl(download_url.to_string()))?;
+        let port = download_url.port_or_known_default().unwrap_or(443);
+        let mut tls = Tls::default();
+        tls.rustls.alpn = vec!["http/1.1".into()];
+        let stream = StreamStd::connect_tls(host, port, &tls)
+            .map_err(|_| EmailClientStdError::OperationFailed("open download stream"))?;
+        let mut download_client = JmapClientStd::new(stream, client.http_auth().clone());
+
+        Ok(download_client.blob_download(&download_url)?)
     }
 
     #[cfg(feature = "maildir")]
@@ -1469,4 +1495,13 @@ impl EmailClientStd {
 
         Ok(())
     }
+}
+
+/// Returns `true` when both URLs share the same host and effective
+/// port. Used to decide whether the active JMAP stream (bound to the
+/// API authority) can serve a blob download, or whether a fresh
+/// connection to the download authority is required.
+#[cfg(feature = "jmap")]
+fn same_authority(a: &Url, b: &Url) -> bool {
+    a.host() == b.host() && a.port_or_known_default() == b.port_or_known_default()
 }
