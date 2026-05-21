@@ -891,12 +891,14 @@ impl EmailClientStd {
     /// Appends a raw RFC 5322 message to `mailbox`, tagged with the
     /// given `flags`. `raw` must be a syntactically valid RFC 5322
     /// message; framing-level escaping is handled by the backend.
+    /// Returns the identifier the backend assigned to the stored
+    /// message (maildir basename, JMAP email id, IMAP UID).
     pub fn add_message(
         &mut self,
         mailbox: &str,
         flags: &[Flag],
         raw: Vec<u8>,
-    ) -> Result<(), EmailClientStdError> {
+    ) -> Result<String, EmailClientStdError> {
         trace!("add message with {self:?}");
 
         for kind in self.order.clone() {
@@ -920,25 +922,73 @@ impl EmailClientStd {
         &mut self,
         mailbox: &str,
         flags: &[Flag],
-        raw: Vec<u8>,
-    ) -> Result<(), EmailClientStdError> {
-        use alloc::string::ToString;
+        mut raw: Vec<u8>,
+    ) -> Result<String, EmailClientStdError> {
+        use alloc::{format, string::ToString};
 
-        use io_imap::types::{core::Literal, extensions::binary::LiteralOrLiteral8};
+        use io_imap::types::{
+            core::{AString, Literal, Vec1},
+            extensions::binary::LiteralOrLiteral8,
+            search::SearchKey,
+        };
+        use mail_parser::MessageParser;
+        use uuid::Uuid;
 
         use crate::imap::convert::{flag_from, parse_mailbox};
 
         let client = self.imap.as_mut().expect("imap slot registered");
 
-        let mbox = parse_mailbox(mailbox)?;
         let imap_flags: Vec<_> = flags.iter().map(flag_from).collect();
+
+        // Extract or synthesize a Message-ID up front: needed as a
+        // fallback to recover the UID on servers that don't advertise
+        // UIDPLUS (no APPENDUID response code, RFC 4315).
+        let parsed_id = MessageParser::default()
+            .parse_headers(&raw)
+            .and_then(|m| m.message_id().map(ToString::to_string))
+            .filter(|s| !s.is_empty());
+
+        let message_id = match parsed_id {
+            Some(id) => id,
+            None => {
+                let generated = format!("{}@io-email.invalid", Uuid::new_v4());
+                trace!("appended message had no Message-ID; injected <{generated}>");
+                let header = format!("Message-ID: <{generated}>\r\n");
+                raw.splice(0..0, header.bytes());
+                generated
+            }
+        };
+
         let literal = Literal::try_from(raw)
             .map_err(|e| EmailClientStdError::InvalidMessageContent(e.to_string()))?;
         let message = LiteralOrLiteral8::Literal(literal);
 
-        let _ = client.append(mbox, imap_flags, None, message)?;
+        let mbox = parse_mailbox(mailbox)?;
+        let (_, appenduid) = client.append(mbox, imap_flags, None, message)?;
 
-        Ok(())
+        if let Some((_, uid)) = appenduid {
+            return Ok(uid.to_string());
+        }
+
+        // No UIDPLUS: select the mailbox and recover the UID via
+        // `UID SEARCH HEADER Message-ID`. If duplicates exist (rare),
+        // take the highest UID (newest append).
+        let mbox = parse_mailbox(mailbox)?;
+        let _ = client.select(mbox)?;
+
+        let field = AString::try_from("Message-ID")
+            .map_err(|_| EmailClientStdError::OperationFailed("imap header field"))?;
+        let value = AString::try_from(message_id)
+            .map_err(|_| EmailClientStdError::OperationFailed("imap header value"))?;
+        let criteria = Vec1::from(SearchKey::Header(field, value));
+        let uids = client.search(criteria, true)?;
+
+        let uid = uids
+            .into_iter()
+            .max()
+            .ok_or(EmailClientStdError::OperationFailed("append uid lookup"))?;
+
+        Ok(uid.to_string())
     }
 
     #[cfg(feature = "jmap")]
@@ -947,7 +997,7 @@ impl EmailClientStd {
         mailbox: &str,
         flags: &[Flag],
         raw: Vec<u8>,
-    ) -> Result<(), EmailClientStdError> {
+    ) -> Result<String, EmailClientStdError> {
         use alloc::{collections::BTreeMap, string::ToString};
 
         use io_jmap::{
@@ -1002,12 +1052,18 @@ impl EmailClientStd {
             },
         );
 
-        let output = client.email_import(emails)?;
-        if !output.not_created.is_empty() || output.created.is_empty() {
+        let mut output = client.email_import(emails)?;
+        if !output.not_created.is_empty() {
             return Err(EmailClientStdError::OperationFailed("import"));
         }
 
-        Ok(())
+        let id = output
+            .created
+            .remove("new")
+            .and_then(|email| email.id)
+            .ok_or(EmailClientStdError::OperationFailed("import"))?;
+
+        Ok(id)
     }
 
     #[cfg(feature = "maildir")]
@@ -1016,7 +1072,7 @@ impl EmailClientStd {
         mailbox: &str,
         flags: &[Flag],
         raw: Vec<u8>,
-    ) -> Result<(), EmailClientStdError> {
+    ) -> Result<String, EmailClientStdError> {
         use io_maildir::{flag::Flags as MdFlags, maildir::MaildirSubdir};
 
         use crate::maildir::convert::{flag_from, open_maildir};
@@ -1026,9 +1082,9 @@ impl EmailClientStd {
         let maildir = open_maildir(client, mailbox)?;
         let md_flags: MdFlags = flags.iter().map(flag_from).collect();
 
-        let _ = client.store(maildir, MaildirSubdir::Cur, md_flags, raw)?;
+        let (id, _) = client.store(maildir, MaildirSubdir::Cur, md_flags, raw)?;
 
-        Ok(())
+        Ok(id)
     }
 
     /// Copies every message in `ids` from mailbox `from` to mailbox

@@ -19,7 +19,7 @@ rustdoc-args = ["--cfg", "docsrs"]
 [features]
 default = []
 client = ["pimalaya-stream/std", "io-imap?/client", "io-jmap?/client", "io-maildir?/client", "io-smtp?/client"]
-imap = ["dep:io-imap", "dep:mail-parser", "dep:rfc2047-decoder"]
+imap = ["dep:io-imap", "dep:mail-parser", "dep:rfc2047-decoder", "dep:uuid"]
 jmap = ["dep:io-jmap", "dep:mail-parser", "dep:secrecy", "dep:url"]
 smtp = ["dep:io-smtp"]
 maildir = ["client", "dep:io-maildir", "io-maildir?/client", "dep:mail-parser"]
@@ -41,6 +41,7 @@ secrecy = { version = "0.10", optional = true }
 serde = { version = "1", default-features = false, features = ["derive"], optional = true }
 thiserror = { version = "2", default-features = false }
 url = { version = "2.5", default-features = false, optional = true }
+uuid = { version = "1.19", features = ["v4"], optional = true }
 
 [patch.crates-io]
 io-http.git = "https://github.com/pimalaya/io-http"
