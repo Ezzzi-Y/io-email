@@ -135,13 +135,13 @@ impl EmailClientStd {
         for kind in self.order.clone() {
             match kind {
                 #[cfg(feature = "imap")]
-                BackendKind::Imap => return self.list_mailboxes_imap(with_counts),
+                BackendKind::Imap => return self.imap_list_mailboxes(with_counts),
                 #[cfg(feature = "jmap")]
-                BackendKind::Jmap => return self.list_mailboxes_jmap(),
+                BackendKind::Jmap => return self.jmap_list_mailboxes(),
                 #[cfg(feature = "maildir")]
-                BackendKind::Maildir => return self.list_mailboxes_maildir(),
+                BackendKind::Maildir => return self.maildir_list_mailboxes(),
                 #[cfg(feature = "m2dir")]
-                BackendKind::M2dir => return self.list_mailboxes_m2dir(),
+                BackendKind::M2dir => return self.m2dir_list_mailboxes(),
                 #[cfg(feature = "smtp")]
                 BackendKind::Smtp => continue,
             }
@@ -175,19 +175,24 @@ impl EmailClientStd {
             match kind {
                 #[cfg(feature = "imap")]
                 BackendKind::Imap => {
-                    return self.list_envelopes_imap(mailbox, page, page_size, with_attachment);
+                    return self.imap_list_envelopes(mailbox, page, page_size, with_attachment);
                 }
                 #[cfg(feature = "jmap")]
                 BackendKind::Jmap => {
-                    return self.list_envelopes_jmap(mailbox, page, page_size);
+                    return self.jmap_list_envelopes(mailbox, page, page_size);
                 }
                 #[cfg(feature = "maildir")]
                 BackendKind::Maildir => {
-                    return self.list_envelopes_maildir(mailbox, page, page_size);
+                    return self.maildir_list_envelopes(mailbox, page, page_size);
                 }
                 #[cfg(feature = "m2dir")]
                 BackendKind::M2dir => {
-                    return self.list_envelopes_m2dir(mailbox, page, page_size, with_attachment);
+                    return self.m2dir_list_envelopes_par(
+                        mailbox,
+                        page,
+                        page_size,
+                        with_attachment,
+                    );
                 }
                 #[cfg(feature = "smtp")]
                 BackendKind::Smtp => continue,
@@ -227,7 +232,7 @@ impl EmailClientStd {
             match kind {
                 #[cfg(feature = "imap")]
                 BackendKind::Imap => {
-                    return self.search_envelopes_imap(
+                    return self.imap_search_envelopes(
                         mailbox,
                         query,
                         page,
@@ -237,11 +242,11 @@ impl EmailClientStd {
                 }
                 #[cfg(feature = "jmap")]
                 BackendKind::Jmap => {
-                    return self.search_envelopes_jmap(mailbox, query, page, page_size);
+                    return self.jmap_search_envelopes(mailbox, query, page, page_size);
                 }
                 #[cfg(feature = "maildir")]
                 BackendKind::Maildir => {
-                    return self.search_envelopes_maildir(mailbox, query, page, page_size);
+                    return self.maildir_search_envelopes(mailbox, query, page, page_size);
                 }
                 #[cfg(feature = "m2dir")]
                 BackendKind::M2dir => continue,
@@ -274,9 +279,9 @@ impl EmailClientStd {
         for kind in self.order.clone() {
             match kind {
                 #[cfg(feature = "imap")]
-                BackendKind::Imap => return self.diff_envelopes_imap(mailbox, state),
+                BackendKind::Imap => return self.imap_diff_envelopes(mailbox, state),
                 #[cfg(feature = "jmap")]
-                BackendKind::Jmap => return self.diff_envelopes_jmap(mailbox, state),
+                BackendKind::Jmap => return self.jmap_diff_envelopes(mailbox, state),
                 #[cfg(feature = "maildir")]
                 BackendKind::Maildir => continue,
                 #[cfg(feature = "m2dir")]
@@ -305,7 +310,7 @@ impl EmailClientStd {
                 #[cfg(feature = "imap")]
                 BackendKind::Imap => continue,
                 #[cfg(feature = "jmap")]
-                BackendKind::Jmap => return self.diff_mailboxes_jmap(state),
+                BackendKind::Jmap => return self.jmap_diff_mailboxes(state),
                 #[cfg(feature = "maildir")]
                 BackendKind::Maildir => continue,
                 #[cfg(feature = "m2dir")]
@@ -365,13 +370,13 @@ impl EmailClientStd {
         for kind in self.order.clone() {
             match kind {
                 #[cfg(feature = "imap")]
-                BackendKind::Imap => return self.store_flags_imap(mailbox, ids, flags, op),
+                BackendKind::Imap => return self.imap_store_flags(mailbox, ids, flags, op),
                 #[cfg(feature = "jmap")]
-                BackendKind::Jmap => return self.store_flags_jmap(ids, flags, op),
+                BackendKind::Jmap => return self.jmap_store_flags(ids, flags, op),
                 #[cfg(feature = "maildir")]
-                BackendKind::Maildir => return self.store_flags_maildir(mailbox, ids, flags, op),
+                BackendKind::Maildir => return self.maildir_store_flags(mailbox, ids, flags, op),
                 #[cfg(feature = "m2dir")]
-                BackendKind::M2dir => return self.store_flags_m2dir(mailbox, ids, flags, op),
+                BackendKind::M2dir => return self.m2dir_store_flags(mailbox, ids, flags, op),
                 #[cfg(feature = "smtp")]
                 BackendKind::Smtp => continue,
             }
@@ -391,13 +396,13 @@ impl EmailClientStd {
         for kind in self.order.clone() {
             match kind {
                 #[cfg(feature = "imap")]
-                BackendKind::Imap => return self.get_message_imap(mailbox, id),
+                BackendKind::Imap => return self.imap_get_message(mailbox, id),
                 #[cfg(feature = "jmap")]
-                BackendKind::Jmap => return self.get_message_jmap(id),
+                BackendKind::Jmap => return self.jmap_get_message(id),
                 #[cfg(feature = "maildir")]
-                BackendKind::Maildir => return self.get_message_maildir(mailbox, id),
+                BackendKind::Maildir => return self.maildir_get_message(mailbox, id),
                 #[cfg(feature = "m2dir")]
-                BackendKind::M2dir => return self.get_message_m2dir(mailbox, id),
+                BackendKind::M2dir => return self.m2dir_get_message(mailbox, id),
                 #[cfg(feature = "smtp")]
                 BackendKind::Smtp => continue,
             }
@@ -422,13 +427,13 @@ impl EmailClientStd {
         for kind in self.order.clone() {
             match kind {
                 #[cfg(feature = "imap")]
-                BackendKind::Imap => return self.add_message_imap(mailbox, flags, raw),
+                BackendKind::Imap => return self.imap_add_message(mailbox, flags, raw),
                 #[cfg(feature = "jmap")]
-                BackendKind::Jmap => return self.add_message_jmap(mailbox, flags, raw),
+                BackendKind::Jmap => return self.jmap_add_message(mailbox, flags, raw),
                 #[cfg(feature = "maildir")]
-                BackendKind::Maildir => return self.add_message_maildir(mailbox, flags, raw),
+                BackendKind::Maildir => return self.maildir_add_message(mailbox, flags, raw),
                 #[cfg(feature = "m2dir")]
-                BackendKind::M2dir => return self.add_message_m2dir(mailbox, flags, raw),
+                BackendKind::M2dir => return self.m2dir_add_message(mailbox, flags, raw),
                 #[cfg(feature = "smtp")]
                 BackendKind::Smtp => continue,
             }
@@ -444,13 +449,13 @@ impl EmailClientStd {
         for kind in self.order.clone() {
             match kind {
                 #[cfg(feature = "imap")]
-                BackendKind::Imap => return self.create_mailbox_imap(name),
+                BackendKind::Imap => return self.imap_create_mailbox(name),
                 #[cfg(feature = "jmap")]
-                BackendKind::Jmap => return self.create_mailbox_jmap(name),
+                BackendKind::Jmap => return self.jmap_create_mailbox(name),
                 #[cfg(feature = "maildir")]
-                BackendKind::Maildir => return self.create_mailbox_maildir(name),
+                BackendKind::Maildir => return self.maildir_create_mailbox(name),
                 #[cfg(feature = "m2dir")]
-                BackendKind::M2dir => return self.create_mailbox_m2dir(name),
+                BackendKind::M2dir => return self.m2dir_create_mailbox(name),
                 #[cfg(feature = "smtp")]
                 BackendKind::Smtp => continue,
             }
@@ -466,13 +471,13 @@ impl EmailClientStd {
         for kind in self.order.clone() {
             match kind {
                 #[cfg(feature = "imap")]
-                BackendKind::Imap => return self.delete_mailbox_imap(name),
+                BackendKind::Imap => return self.imap_delete_mailbox(name),
                 #[cfg(feature = "jmap")]
-                BackendKind::Jmap => return self.delete_mailbox_jmap(name),
+                BackendKind::Jmap => return self.jmap_delete_mailbox(name),
                 #[cfg(feature = "maildir")]
-                BackendKind::Maildir => return self.delete_mailbox_maildir(name),
+                BackendKind::Maildir => return self.maildir_delete_mailbox(name),
                 #[cfg(feature = "m2dir")]
-                BackendKind::M2dir => return self.delete_mailbox_m2dir(name),
+                BackendKind::M2dir => return self.m2dir_delete_mailbox(name),
                 #[cfg(feature = "smtp")]
                 BackendKind::Smtp => continue,
             }
@@ -491,13 +496,13 @@ impl EmailClientStd {
         for kind in self.order.clone() {
             match kind {
                 #[cfg(feature = "imap")]
-                BackendKind::Imap => return self.delete_message_imap(mailbox, id),
+                BackendKind::Imap => return self.imap_delete_message(mailbox, id),
                 #[cfg(feature = "jmap")]
-                BackendKind::Jmap => return self.delete_message_jmap(id),
+                BackendKind::Jmap => return self.jmap_delete_message(id),
                 #[cfg(feature = "maildir")]
                 BackendKind::Maildir => continue,
                 #[cfg(feature = "m2dir")]
-                BackendKind::M2dir => return self.delete_message_m2dir(mailbox, id),
+                BackendKind::M2dir => return self.m2dir_delete_message(mailbox, id),
                 #[cfg(feature = "smtp")]
                 BackendKind::Smtp => continue,
             }
@@ -519,13 +524,13 @@ impl EmailClientStd {
         for kind in self.order.clone() {
             match kind {
                 #[cfg(feature = "imap")]
-                BackendKind::Imap => return self.copy_messages_imap(from, to, ids),
+                BackendKind::Imap => return self.imap_copy_messages(from, to, ids),
                 #[cfg(feature = "jmap")]
-                BackendKind::Jmap => return self.copy_messages_jmap(to, ids),
+                BackendKind::Jmap => return self.jmap_copy_messages(to, ids),
                 #[cfg(feature = "maildir")]
-                BackendKind::Maildir => return self.copy_messages_maildir(from, to, ids),
+                BackendKind::Maildir => return self.maildir_copy_messages(from, to, ids),
                 #[cfg(feature = "m2dir")]
-                BackendKind::M2dir => return self.copy_messages_m2dir(from, to, ids),
+                BackendKind::M2dir => return self.m2dir_copy_messages(from, to, ids),
                 #[cfg(feature = "smtp")]
                 BackendKind::Smtp => continue,
             }
@@ -547,13 +552,13 @@ impl EmailClientStd {
         for kind in self.order.clone() {
             match kind {
                 #[cfg(feature = "imap")]
-                BackendKind::Imap => return self.move_messages_imap(from, to, ids),
+                BackendKind::Imap => return self.imap_move_messages(from, to, ids),
                 #[cfg(feature = "jmap")]
-                BackendKind::Jmap => return self.move_messages_jmap(from, to, ids),
+                BackendKind::Jmap => return self.jmap_move_messages(from, to, ids),
                 #[cfg(feature = "maildir")]
-                BackendKind::Maildir => return self.move_messages_maildir(from, to, ids),
+                BackendKind::Maildir => return self.maildir_move_messages(from, to, ids),
                 #[cfg(feature = "m2dir")]
-                BackendKind::M2dir => return self.move_messages_m2dir(from, to, ids),
+                BackendKind::M2dir => return self.m2dir_move_messages(from, to, ids),
                 #[cfg(feature = "smtp")]
                 BackendKind::Smtp => continue,
             }
@@ -584,9 +589,9 @@ impl EmailClientStd {
         for kind in self.order.clone() {
             match kind {
                 #[cfg(feature = "smtp")]
-                BackendKind::Smtp => return self.send_message_smtp(raw, from, to),
+                BackendKind::Smtp => return self.smtp_send_message(raw, from, to),
                 #[cfg(feature = "jmap")]
-                BackendKind::Jmap => return self.send_message_jmap(raw, from, to),
+                BackendKind::Jmap => return self.jmap_send_message(raw, from, to),
                 #[cfg(feature = "imap")]
                 BackendKind::Imap => continue,
                 #[cfg(feature = "maildir")]

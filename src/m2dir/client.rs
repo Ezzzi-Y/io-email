@@ -2,11 +2,12 @@
 //! dispatch methods.
 
 use alloc::{
+    collections::BTreeSet,
     string::{String, ToString},
     vec::Vec,
 };
 
-use io_m2dir::flag::Flags as M2Flags;
+use io_m2dir::{entry::M2dirFullEntry, flag::M2dirFlags as M2Flags};
 use mail_parser::MessageParser;
 
 use crate::{
@@ -22,9 +23,11 @@ impl EmailClientStd {
     /// ordering rule.
     pub fn with_m2dir(mut self, client: io_m2dir::client::M2dirClient) -> Self {
         self.m2dir = Some(client);
+
         if !self.order.contains(&crate::client::BackendKind::M2dir) {
             self.order.push(crate::client::BackendKind::M2dir);
         }
+
         self
     }
 
@@ -42,7 +45,7 @@ impl EmailClientStd {
         self.m2dir.as_mut()
     }
 
-    pub(crate) fn list_mailboxes_m2dir(&mut self) -> Result<Vec<Mailbox>, EmailClientStdError> {
+    pub(crate) fn m2dir_list_mailboxes(&mut self) -> Result<Vec<Mailbox>, EmailClientStdError> {
         let client = self.m2dir.as_mut().expect("m2dir slot registered");
         let m2dirs = client.list_mailboxes()?;
         let mut mailboxes: Vec<_> = m2dirs.iter().map(mailbox_from).collect();
@@ -50,7 +53,7 @@ impl EmailClientStd {
         Ok(mailboxes)
     }
 
-    pub(crate) fn list_envelopes_m2dir(
+    pub(crate) fn m2dir_list_envelopes_par(
         &mut self,
         mailbox: &str,
         page: Option<u32>,
@@ -60,36 +63,13 @@ impl EmailClientStd {
         let client = self.m2dir.as_mut().expect("m2dir slot registered");
 
         let m2dir = open_m2dir(client, mailbox)?;
-        let entries = client.list_messages(m2dir.clone())?;
-
-        let parser = MessageParser::default();
-        let mut envelopes: Vec<Envelope> = Vec::with_capacity(entries.len());
-        for entry in &entries {
-            let (_, bytes) = client.get(m2dir.clone(), entry.id())?;
-            let flags = client.read_flags(&m2dir, entry.id())?;
-            // Header-only parse when attachment detection is not
-            // requested: skips body decoding (quoted-printable,
-            // base64, MIME tree walk) entirely. Subject / from / to /
-            // date come from headers; `size` is the raw byte length.
-            let parsed = if with_attachment {
-                parser.parse(&bytes)
-            } else {
-                parser.parse_headers(&bytes)
-            }
-            .ok_or(EmailClientStdError::OperationFailed("parse m2dir message"))?;
-            let mut envelope = envelope_from(entry, &flags, &parsed);
-            if with_attachment {
-                envelope.has_attachment = Some(parsed.attachment_count() > 0);
-            }
-            envelopes.push(envelope);
-        }
-
-        envelopes.sort_by(|a, b| b.date.cmp(&a.date));
-
+        let entries = client.list_entries(m2dir.clone())?;
+        let loaded = client.read_entries_par(&m2dir, &entries)?;
+        let envelopes = build_envelopes(&loaded, with_attachment)?;
         Ok(paginate(envelopes, page, page_size))
     }
 
-    pub(crate) fn store_flags_m2dir(
+    pub(crate) fn m2dir_store_flags(
         &mut self,
         mailbox: &str,
         ids: &[&str],
@@ -118,7 +98,7 @@ impl EmailClientStd {
         Ok(())
     }
 
-    pub(crate) fn get_message_m2dir(
+    pub(crate) fn m2dir_get_message(
         &mut self,
         mailbox: &str,
         id: &str,
@@ -129,7 +109,7 @@ impl EmailClientStd {
         Ok(bytes)
     }
 
-    pub(crate) fn add_message_m2dir(
+    pub(crate) fn m2dir_add_message(
         &mut self,
         mailbox: &str,
         flags: &[Flag],
@@ -149,20 +129,20 @@ impl EmailClientStd {
         Ok(id)
     }
 
-    pub(crate) fn create_mailbox_m2dir(&mut self, name: &str) -> Result<(), EmailClientStdError> {
+    pub(crate) fn m2dir_create_mailbox(&mut self, name: &str) -> Result<(), EmailClientStdError> {
         let client = self.m2dir.as_mut().expect("m2dir slot registered");
         let _ = client.create_mailbox(name)?;
         Ok(())
     }
 
-    pub(crate) fn delete_mailbox_m2dir(&mut self, name: &str) -> Result<(), EmailClientStdError> {
+    pub(crate) fn m2dir_delete_mailbox(&mut self, name: &str) -> Result<(), EmailClientStdError> {
         let client = self.m2dir.as_mut().expect("m2dir slot registered");
         let m2dir = open_m2dir(client, name)?;
         client.delete_mailbox(m2dir.path().clone())?;
         Ok(())
     }
 
-    pub(crate) fn delete_message_m2dir(
+    pub(crate) fn m2dir_delete_message(
         &mut self,
         mailbox: &str,
         id: &str,
@@ -173,7 +153,7 @@ impl EmailClientStd {
         Ok(())
     }
 
-    pub(crate) fn copy_messages_m2dir(
+    pub(crate) fn m2dir_copy_messages(
         &mut self,
         from: &str,
         to: &str,
@@ -196,7 +176,7 @@ impl EmailClientStd {
         Ok(())
     }
 
-    pub(crate) fn move_messages_m2dir(
+    pub(crate) fn m2dir_move_messages(
         &mut self,
         from: &str,
         to: &str,
@@ -219,4 +199,34 @@ impl EmailClientStd {
 
         Ok(())
     }
+}
+
+fn build_envelopes(
+    loaded: &BTreeSet<M2dirFullEntry>,
+    with_attachment: bool,
+) -> Result<Vec<Envelope>, EmailClientStdError> {
+    let parser = MessageParser::default();
+    let mut envelopes: Vec<Envelope> = Vec::with_capacity(loaded.len());
+
+    for full in loaded {
+        // Header-only parse when attachment detection is not
+        // requested: skips body decoding (quoted-printable, base64,
+        // MIME tree walk) entirely. Subject / from / to / date come
+        // from headers; `size` is the raw byte length.
+        let parsed = if with_attachment {
+            parser.parse(full.contents())
+        } else {
+            parser.parse_headers(full.contents())
+        }
+        .ok_or(EmailClientStdError::OperationFailed("parse m2dir message"))?;
+
+        let mut envelope = envelope_from(full.entry(), full.flags(), &parsed);
+        if with_attachment {
+            envelope.has_attachment = Some(parsed.attachment_count() > 0);
+        }
+        envelopes.push(envelope);
+    }
+
+    envelopes.sort_by(|a, b| b.date.cmp(&a.date));
+    Ok(envelopes)
 }

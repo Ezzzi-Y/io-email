@@ -66,13 +66,13 @@ impl EmailClientStd {
         self.jmap.as_mut()
     }
 
-    pub(crate) fn list_mailboxes_jmap(&mut self) -> Result<Vec<Mailbox>, EmailClientStdError> {
+    pub(crate) fn jmap_list_mailboxes(&mut self) -> Result<Vec<Mailbox>, EmailClientStdError> {
         let client = self.jmap.as_mut().expect("jmap slot registered");
         let output = client.mailbox_query(None, None, None, None, None)?;
         Ok(output.mailboxes.into_iter().map(Mailbox::from).collect())
     }
 
-    pub(crate) fn list_envelopes_jmap(
+    pub(crate) fn jmap_list_envelopes(
         &mut self,
         mailbox: &str,
         page: Option<u32>,
@@ -89,7 +89,7 @@ impl EmailClientStd {
     }
 
     #[cfg(feature = "search")]
-    pub(crate) fn search_envelopes_jmap(
+    pub(crate) fn jmap_search_envelopes(
         &mut self,
         mailbox: &str,
         query: Option<&SearchEmailsQuery>,
@@ -137,7 +137,7 @@ impl EmailClientStd {
         Ok(envelopes)
     }
 
-    pub(crate) fn store_flags_jmap(
+    pub(crate) fn jmap_store_flags(
         &mut self,
         ids: &[&str],
         flags: &[Flag],
@@ -166,7 +166,7 @@ impl EmailClientStd {
         Ok(())
     }
 
-    pub(crate) fn get_message_jmap(&mut self, id: &str) -> Result<Vec<u8>, EmailClientStdError> {
+    pub(crate) fn jmap_get_message(&mut self, id: &str) -> Result<Vec<u8>, EmailClientStdError> {
         let client = self.jmap.as_mut().expect("jmap slot registered");
 
         let session = client
@@ -223,7 +223,7 @@ impl EmailClientStd {
         Ok(download_client.blob_download(&download_url)?)
     }
 
-    pub(crate) fn add_message_jmap(
+    pub(crate) fn jmap_add_message(
         &mut self,
         mailbox: &str,
         flags: &[Flag],
@@ -287,7 +287,7 @@ impl EmailClientStd {
         Ok(id)
     }
 
-    pub(crate) fn create_mailbox_jmap(&mut self, name: &str) -> Result<(), EmailClientStdError> {
+    pub(crate) fn jmap_create_mailbox(&mut self, name: &str) -> Result<(), EmailClientStdError> {
         use io_jmap::rfc8621::mailbox::MailboxCreate;
 
         let client = self.jmap.as_mut().expect("jmap slot registered");
@@ -314,7 +314,7 @@ impl EmailClientStd {
         Ok(())
     }
 
-    pub(crate) fn delete_mailbox_jmap(&mut self, name: &str) -> Result<(), EmailClientStdError> {
+    pub(crate) fn jmap_delete_mailbox(&mut self, name: &str) -> Result<(), EmailClientStdError> {
         let client = self.jmap.as_mut().expect("jmap slot registered");
 
         let mq = client.mailbox_query(None, None, None, None, None)?;
@@ -338,7 +338,7 @@ impl EmailClientStd {
         Ok(())
     }
 
-    pub(crate) fn delete_message_jmap(&mut self, id: &str) -> Result<(), EmailClientStdError> {
+    pub(crate) fn jmap_delete_message(&mut self, id: &str) -> Result<(), EmailClientStdError> {
         let client = self.jmap.as_mut().expect("jmap slot registered");
 
         let mut args = JmapEmailSetArgs::default();
@@ -352,7 +352,7 @@ impl EmailClientStd {
         Ok(())
     }
 
-    pub(crate) fn copy_messages_jmap(
+    pub(crate) fn jmap_copy_messages(
         &mut self,
         to: &str,
         ids: &[&str],
@@ -377,7 +377,7 @@ impl EmailClientStd {
         Ok(())
     }
 
-    pub(crate) fn move_messages_jmap(
+    pub(crate) fn jmap_move_messages(
         &mut self,
         from: &str,
         to: &str,
@@ -410,7 +410,7 @@ impl EmailClientStd {
         Ok(())
     }
 
-    pub(crate) fn send_message_jmap(
+    pub(crate) fn jmap_send_message(
         &mut self,
         raw: Vec<u8>,
         from: &str,
@@ -518,7 +518,7 @@ impl EmailClientStd {
         Ok(())
     }
 
-    pub(crate) fn diff_envelopes_jmap(
+    pub(crate) fn jmap_diff_envelopes(
         &mut self,
         _mailbox: &str,
         state: Option<&[u8]>,
@@ -528,7 +528,7 @@ impl EmailClientStd {
         // First sync or unusable cached state: capture the new state
         // cheaply via `Email/get` with an empty id list.
         let Some(since_state) = state.and_then(envelope_diff::decode) else {
-            return baseline_jmap(client);
+            return jmap_baseline(client);
         };
 
         let mut created_ids: Vec<String> = Vec::new();
@@ -540,7 +540,7 @@ impl EmailClientStd {
             let changes = match client.email_changes(cursor.clone(), None) {
                 Ok(c) => c,
                 Err(err) if envelope_diff::is_cannot_calculate_changes(&err) => {
-                    return baseline_jmap(client);
+                    return jmap_baseline(client);
                 }
                 Err(err) => return Err(err.into()),
             };
@@ -590,7 +590,7 @@ impl EmailClientStd {
         })
     }
 
-    pub(crate) fn diff_mailboxes_jmap(
+    pub(crate) fn jmap_diff_mailboxes(
         &mut self,
         state: Option<&[u8]>,
     ) -> Result<MailboxDiff, EmailClientStdError> {
@@ -632,7 +632,7 @@ impl EmailClientStd {
 /// Captures a fresh JMAP `Email/state` checkpoint via an empty
 /// `Email/get`. Used on the first sync, when the stored state is
 /// unusable, or when the server returns `cannotCalculateChanges`.
-fn baseline_jmap(client: &mut JmapClientStd) -> Result<EnvelopeDiff, EmailClientStdError> {
+fn jmap_baseline(client: &mut JmapClientStd) -> Result<EnvelopeDiff, EmailClientStdError> {
     let output = client.email_get(Vec::new(), None, false, false, 0)?;
     Ok(EnvelopeDiff::FullListRequired {
         new_state: Some(envelope_diff::encode(&output.new_state)),

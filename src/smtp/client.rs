@@ -33,7 +33,7 @@ impl EmailClientStd {
         self.smtp.as_mut()
     }
 
-    pub(crate) fn send_message_smtp(
+    pub(crate) fn smtp_send_message(
         &mut self,
         raw: Vec<u8>,
         from: &str,

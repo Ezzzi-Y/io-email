@@ -13,8 +13,8 @@ use alloc::{
 use chrono::DateTime;
 use io_m2dir::{
     client::{M2dirClient, M2dirClientError},
-    entry::Entry,
-    flag::Flags as M2Flags,
+    entry::M2dirEntry,
+    flag::M2dirFlags as M2Flags,
     m2dir::M2dir,
     m2store::M2store,
 };
@@ -66,7 +66,7 @@ pub fn mailbox_from(m2dir: &M2dir) -> Mailbox {
 ///
 /// [`MessageParser::parse`]: mail_parser::MessageParser::parse
 /// [`MessageParser::parse_headers`]: mail_parser::MessageParser::parse_headers
-pub fn envelope_from(entry: &Entry, meta: &M2Flags, parsed: &ParsedMessage<'_>) -> Envelope {
+pub fn envelope_from(entry: &M2dirEntry, meta: &M2Flags, parsed: &ParsedMessage<'_>) -> Envelope {
     let id = entry.id().to_string();
 
     let flags = meta.iter().map(flag_from_meta_line).collect();

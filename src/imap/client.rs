@@ -76,7 +76,7 @@ impl EmailClientStd {
         self.imap.as_mut()
     }
 
-    pub(crate) fn list_mailboxes_imap(
+    pub(crate) fn imap_list_mailboxes(
         &mut self,
         with_counts: bool,
     ) -> Result<Vec<Mailbox>, EmailClientStdError> {
@@ -118,7 +118,7 @@ impl EmailClientStd {
         Ok(mailboxes)
     }
 
-    pub(crate) fn list_envelopes_imap(
+    pub(crate) fn imap_list_envelopes(
         &mut self,
         mailbox: &str,
         page: Option<u32>,
@@ -158,7 +158,7 @@ impl EmailClientStd {
     }
 
     #[cfg(feature = "search")]
-    pub(crate) fn search_envelopes_imap(
+    pub(crate) fn imap_search_envelopes(
         &mut self,
         mailbox: &str,
         query: Option<&SearchEmailsQuery>,
@@ -221,7 +221,7 @@ impl EmailClientStd {
         Ok(envelopes)
     }
 
-    pub(crate) fn store_flags_imap(
+    pub(crate) fn imap_store_flags(
         &mut self,
         mailbox: &str,
         ids: &[&str],
@@ -246,7 +246,7 @@ impl EmailClientStd {
         Ok(())
     }
 
-    pub(crate) fn get_message_imap(
+    pub(crate) fn imap_get_message(
         &mut self,
         mailbox: &str,
         id: &str,
@@ -275,7 +275,7 @@ impl EmailClientStd {
             .ok_or(EmailClientStdError::EmptyMessageBody)
     }
 
-    pub(crate) fn add_message_imap(
+    pub(crate) fn imap_add_message(
         &mut self,
         mailbox: &str,
         flags: &[Flag],
@@ -336,21 +336,21 @@ impl EmailClientStd {
         Ok(uid.to_string())
     }
 
-    pub(crate) fn create_mailbox_imap(&mut self, name: &str) -> Result<(), EmailClientStdError> {
+    pub(crate) fn imap_create_mailbox(&mut self, name: &str) -> Result<(), EmailClientStdError> {
         let client = self.imap.as_mut().expect("imap slot registered");
         let mbox = parse_mailbox(name)?;
         client.create(mbox)?;
         Ok(())
     }
 
-    pub(crate) fn delete_mailbox_imap(&mut self, name: &str) -> Result<(), EmailClientStdError> {
+    pub(crate) fn imap_delete_mailbox(&mut self, name: &str) -> Result<(), EmailClientStdError> {
         let client = self.imap.as_mut().expect("imap slot registered");
         let mbox = parse_mailbox(name)?;
         client.delete(mbox)?;
         Ok(())
     }
 
-    pub(crate) fn delete_message_imap(
+    pub(crate) fn imap_delete_message(
         &mut self,
         mailbox: &str,
         id: &str,
@@ -366,7 +366,7 @@ impl EmailClientStd {
         Ok(())
     }
 
-    pub(crate) fn copy_messages_imap(
+    pub(crate) fn imap_copy_messages(
         &mut self,
         from: &str,
         to: &str,
@@ -384,7 +384,7 @@ impl EmailClientStd {
         Ok(())
     }
 
-    pub(crate) fn move_messages_imap(
+    pub(crate) fn imap_move_messages(
         &mut self,
         from: &str,
         to: &str,
@@ -402,7 +402,7 @@ impl EmailClientStd {
         Ok(())
     }
 
-    pub(crate) fn diff_envelopes_imap(
+    pub(crate) fn imap_diff_envelopes(
         &mut self,
         mailbox: &str,
         state: Option<&[u8]>,
@@ -428,17 +428,17 @@ impl EmailClientStd {
         // highest UID via UID FETCH `*`, and capture the new
         // checkpoint for next time.
         let Some(cached) = cached else {
-            return baseline_imap(client, mbox);
+            return imap_baseline(client, mbox);
         };
 
         let Some(uid_validity_nz) = NonZeroU32::new(cached.uid_validity) else {
-            return baseline_imap(client, mbox);
+            return imap_baseline(client, mbox);
         };
 
         let select_data =
             match client.select_qresync(mbox.clone(), uid_validity_nz, cached.highest_mod_seq) {
                 Ok(data) => data,
-                Err(_) => return baseline_imap(client, mbox),
+                Err(_) => return imap_baseline(client, mbox),
             };
 
         let server_uid_validity = select_data
@@ -446,7 +446,7 @@ impl EmailClientStd {
             .map(NonZeroU32::get)
             .unwrap_or(cached.uid_validity);
         if server_uid_validity != cached.uid_validity {
-            return baseline_imap(client, mbox);
+            return imap_baseline(client, mbox);
         }
 
         let flag_updates: Vec<FlagUpdate> = select_data
@@ -501,7 +501,7 @@ impl EmailClientStd {
 /// Captures a fresh IMAP checkpoint from a plain SELECT plus a
 /// `UID FETCH *` to read the highest UID. Used on the first sync, when
 /// the stored state is unusable, or when UIDVALIDITY bumped.
-fn baseline_imap(
+fn imap_baseline(
     client: &mut io_imap::client::ImapClientStd<pimalaya_stream::std::stream::StreamStd>,
     mbox: ImapMailbox<'static>,
 ) -> Result<EnvelopeDiff, EmailClientStdError> {

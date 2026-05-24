@@ -40,7 +40,7 @@ impl EmailClientStd {
         self.maildir.as_mut()
     }
 
-    pub(crate) fn list_mailboxes_maildir(&mut self) -> Result<Vec<Mailbox>, EmailClientStdError> {
+    pub(crate) fn maildir_list_mailboxes(&mut self) -> Result<Vec<Mailbox>, EmailClientStdError> {
         let client = self.maildir.as_mut().expect("maildir slot registered");
         let maildirs = client.list_maildirs()?;
         let mut mailboxes: Vec<_> = maildirs.into_iter().map(Mailbox::from).collect();
@@ -48,7 +48,7 @@ impl EmailClientStd {
         Ok(mailboxes)
     }
 
-    pub(crate) fn list_envelopes_maildir(
+    pub(crate) fn maildir_list_envelopes(
         &mut self,
         mailbox: &str,
         page: Option<u32>,
@@ -66,7 +66,7 @@ impl EmailClientStd {
     }
 
     #[cfg(feature = "search")]
-    pub(crate) fn search_envelopes_maildir(
+    pub(crate) fn maildir_search_envelopes(
         &mut self,
         mailbox: &str,
         query: Option<&SearchEmailsQuery>,
@@ -103,7 +103,7 @@ impl EmailClientStd {
         Ok(paginate(envelopes, page, page_size))
     }
 
-    pub(crate) fn store_flags_maildir(
+    pub(crate) fn maildir_store_flags(
         &mut self,
         mailbox: &str,
         ids: &[&str],
@@ -132,7 +132,7 @@ impl EmailClientStd {
         Ok(())
     }
 
-    pub(crate) fn get_message_maildir(
+    pub(crate) fn maildir_get_message(
         &mut self,
         mailbox: &str,
         id: &str,
@@ -145,7 +145,7 @@ impl EmailClientStd {
         Ok(message.into())
     }
 
-    pub(crate) fn add_message_maildir(
+    pub(crate) fn maildir_add_message(
         &mut self,
         mailbox: &str,
         flags: &[Flag],
@@ -161,21 +161,21 @@ impl EmailClientStd {
         Ok(id)
     }
 
-    pub(crate) fn create_mailbox_maildir(&mut self, name: &str) -> Result<(), EmailClientStdError> {
+    pub(crate) fn maildir_create_mailbox(&mut self, name: &str) -> Result<(), EmailClientStdError> {
         let client = self.maildir.as_mut().expect("maildir slot registered");
         let path = client.root().join(name);
         client.create_maildir(path)?;
         Ok(())
     }
 
-    pub(crate) fn delete_mailbox_maildir(&mut self, name: &str) -> Result<(), EmailClientStdError> {
+    pub(crate) fn maildir_delete_mailbox(&mut self, name: &str) -> Result<(), EmailClientStdError> {
         let client = self.maildir.as_mut().expect("maildir slot registered");
         let path = client.root().join(name);
         client.delete_maildir(path)?;
         Ok(())
     }
 
-    pub(crate) fn copy_messages_maildir(
+    pub(crate) fn maildir_copy_messages(
         &mut self,
         from: &str,
         to: &str,
@@ -193,7 +193,7 @@ impl EmailClientStd {
         Ok(())
     }
 
-    pub(crate) fn move_messages_maildir(
+    pub(crate) fn maildir_move_messages(
         &mut self,
         from: &str,
         to: &str,
