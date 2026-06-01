@@ -30,7 +30,7 @@ use io_http::{
     rfc9110::request::HttpRequest,
 };
 use io_jmap::{
-    client::JmapClientStd,
+    client::{default_alpn, JmapClientStd},
     rfc8620::event_source::{parse_state_change, subscribe_url},
     rfc8621::email::{Email, EmailFilter, EmailProperty},
 };
@@ -137,7 +137,7 @@ fn open_event_source(client: &JmapClientStd) -> Result<SseStream, EmailClientStd
     let port = url.port_or_known_default().unwrap_or(443);
 
     let mut tls = Tls::default();
-    tls.rustls.alpn = vec!["http/1.1".into()];
+    tls.rustls.alpn = default_alpn();
     let stream = StreamStd::connect_tls(host.to_string(), port, &tls)
         .map_err(|_| EmailClientStdError::OperationFailed("jmap event-source TLS connect"))?;
 
