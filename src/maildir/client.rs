@@ -1,9 +1,9 @@
 //! Std-blocking Maildir client.
 //!
 //! Holds an inner [`io_maildir::client::MaildirClient`] wrapping the
-//! filesystem root and its per-store knobs (`dovecot_keywords`,
-//! `keywords_header`, `strip_headers`, `maildir_plus`,
-//! `maildirpp_inbox`, `fs_layout`).
+//! filesystem root and its per-store options (`dovecot_keywords`,
+//! `keywords_header`, `strip_headers`, plus the `MaildirStore`'s
+//! `maildirpp` switch).
 //!
 //! [`Self::run`] pumps io-email Maildir coroutines directly against the
 //! local filesystem; the inner client's own helpers stay reachable
@@ -16,7 +16,7 @@ use std::{
 };
 
 use gethostname::gethostname;
-use io_maildir::{client::MaildirClient as InnerMaildirClient, coroutine::*, path::MaildirPath};
+use io_maildir::{client::MaildirClient as InnerMaildirClient, coroutine::*, path::FsPath};
 use log::trace;
 use thiserror::Error;
 
@@ -79,19 +79,18 @@ pub enum MaildirClientError {
 
 /// Std-blocking Maildir client built on a filesystem root.
 ///
-/// All per-store behaviour knobs (`dovecot_keywords`, `keywords_header`,
-/// `strip_headers`, `maildir_plus`, `maildirpp_inbox`, `fs_layout`)
-/// live on [`Self::inner`] and are read through it on every shared-API
-/// call.
+/// All per-store behaviour options (`store.maildirpp`,
+/// `dovecot_keywords`, `keywords_header`, `strip_headers`) live on
+/// [`Self::inner`] and are read through it on every shared-API call.
 pub struct MaildirClient {
     pub inner: InnerMaildirClient,
 }
 
 impl MaildirClient {
-    /// Wraps a fresh inner client rooted at `root`. All knobs default
+    /// Wraps a fresh inner client rooted at `root`. All options default
     /// to strict-Maildir behaviour; flip them on [`Self::inner`] before
     /// running coroutines.
-    pub fn new(root: impl Into<MaildirPath>) -> Self {
+    pub fn new(root: impl Into<FsPath>) -> Self {
         Self {
             inner: InnerMaildirClient::new(root),
         }
@@ -146,7 +145,7 @@ impl MaildirClient {
                             Ok(iter) => {
                                 for entry in iter {
                                     let entry = entry?;
-                                    names.insert(normalize_path(entry.path()));
+                                    names.insert(FsPath::from(entry.path()));
                                 }
                             }
                             Err(err) if err.kind() == io::ErrorKind::NotFound => {}
@@ -225,18 +224,12 @@ impl MaildirClient {
     /// is currently a no-op; see [`MaildirMailboxList`] for the path
     /// to surfacing per-mailbox totals.
     pub fn list_mailboxes(&self, with_counts: bool) -> Result<Vec<Mailbox>, MaildirClientError> {
-        let root = self.inner.root().clone();
-        let maildir_plus = self.inner.maildir_plus;
-        self.run(MaildirMailboxList::new(
-            std::path::PathBuf::from(root),
-            maildir_plus,
-            with_counts,
-        ))
+        self.run(MaildirMailboxList::new(&self.inner.store, with_counts))
     }
 
     /// Lists envelopes from `mailbox`. `page = None` and
     /// `page_size = None` return the whole listing. The
-    /// `with_attachment` knob is currently ignored on Maildir.
+    /// `with_attachment` switch is currently ignored on Maildir.
     pub fn list_envelopes(
         &self,
         mailbox: &str,
@@ -244,11 +237,8 @@ impl MaildirClient {
         page_size: Option<u32>,
         _with_attachment: bool,
     ) -> Result<Vec<Envelope>, MaildirClientError> {
-        let root = self.inner.root().clone();
-        let maildir_plus = self.inner.maildir_plus;
         self.run(MaildirEnvelopeList::new(
-            std::path::PathBuf::from(root),
-            maildir_plus,
+            &self.inner.store,
             mailbox,
             page,
             page_size,
@@ -266,11 +256,8 @@ impl MaildirClient {
         page_size: Option<u32>,
         _with_attachment: bool,
     ) -> Result<Vec<Envelope>, MaildirClientError> {
-        let root = self.inner.root().clone();
-        let maildir_plus = self.inner.maildir_plus;
         self.run(MaildirEnvelopeSearch::new(
-            std::path::PathBuf::from(root),
-            maildir_plus,
+            &self.inner.store,
             mailbox,
             query,
             page,
@@ -286,11 +273,8 @@ impl MaildirClient {
         flags: &[Flag],
         op: FlagOp,
     ) -> Result<(), MaildirClientError> {
-        let root = self.inner.root().clone();
-        let maildir_plus = self.inner.maildir_plus;
         self.run(MaildirFlagStore::new(
-            std::path::PathBuf::from(root),
-            maildir_plus,
+            &self.inner.store,
             mailbox,
             ids,
             flags,
@@ -300,14 +284,7 @@ impl MaildirClient {
 
     /// Reads one message's raw RFC 5322 bytes from `mailbox`.
     pub fn get_message(&self, mailbox: &str, id: &str) -> Result<Vec<u8>, MaildirClientError> {
-        let root = self.inner.root().clone();
-        let maildir_plus = self.inner.maildir_plus;
-        self.run(MaildirMessageGet::new(
-            std::path::PathBuf::from(root),
-            maildir_plus,
-            mailbox,
-            id,
-        )?)
+        self.run(MaildirMessageGet::new(&self.inner.store, mailbox, id)?)
     }
 
     /// Appends `raw` to `mailbox` under `cur/` with the given flags.
@@ -318,11 +295,8 @@ impl MaildirClient {
         flags: &[Flag],
         raw: Vec<u8>,
     ) -> Result<String, MaildirClientError> {
-        let root = self.inner.root().clone();
-        let maildir_plus = self.inner.maildir_plus;
         self.run(MaildirMessageAdd::new(
-            std::path::PathBuf::from(root),
-            maildir_plus,
+            &self.inner.store,
             mailbox,
             flags,
             raw,
@@ -331,38 +305,19 @@ impl MaildirClient {
 
     /// Creates `name` as a new Maildir under the configured root.
     pub fn create_mailbox(&self, name: &str) -> Result<(), MaildirClientError> {
-        let root = self.inner.root().clone();
-        let maildir_plus = self.inner.maildir_plus;
-        self.run(MaildirMailboxCreate::new(
-            std::path::PathBuf::from(root),
-            maildir_plus,
-            name,
-        )?)
+        self.run(MaildirMailboxCreate::new(&self.inner.store, name)?)
     }
 
     /// Recursively removes the Maildir named `name`.
     pub fn delete_mailbox(&self, name: &str) -> Result<(), MaildirClientError> {
-        let root = self.inner.root().clone();
-        let maildir_plus = self.inner.maildir_plus;
-        self.run(MaildirMailboxDelete::new(
-            std::path::PathBuf::from(root),
-            maildir_plus,
-            name,
-        )?)
+        self.run(MaildirMailboxDelete::new(&self.inner.store, name)?)
     }
 
     /// Flags `id` in `mailbox` as Trashed. Maildir has no atomic
     /// "remove" primitive; pair with a periodic expunge to reclaim
     /// space.
     pub fn delete_message(&self, mailbox: &str, id: &str) -> Result<(), MaildirClientError> {
-        let root = self.inner.root().clone();
-        let maildir_plus = self.inner.maildir_plus;
-        self.run(MaildirMessageDelete::new(
-            std::path::PathBuf::from(root),
-            maildir_plus,
-            mailbox,
-            id,
-        )?)
+        self.run(MaildirMessageDelete::new(&self.inner.store, mailbox, id)?)
     }
 
     /// Copies every id from `from` to `to`.
@@ -372,15 +327,7 @@ impl MaildirClient {
         to: &str,
         ids: &[&str],
     ) -> Result<(), MaildirClientError> {
-        let root = self.inner.root().clone();
-        let maildir_plus = self.inner.maildir_plus;
-        self.run(MaildirMessageCopy::new(
-            std::path::PathBuf::from(root),
-            maildir_plus,
-            from,
-            to,
-            ids,
-        )?)
+        self.run(MaildirMessageCopy::new(&self.inner.store, from, to, ids)?)
     }
 
     /// Moves every id from `from` to `to`.
@@ -390,23 +337,6 @@ impl MaildirClient {
         to: &str,
         ids: &[&str],
     ) -> Result<(), MaildirClientError> {
-        let root = self.inner.root().clone();
-        let maildir_plus = self.inner.maildir_plus;
-        self.run(MaildirMessageMove::new(
-            std::path::PathBuf::from(root),
-            maildir_plus,
-            from,
-            to,
-            ids,
-        )?)
+        self.run(MaildirMessageMove::new(&self.inner.store, from, to, ids)?)
     }
-}
-
-/// Bulk-normalises a [`std::path::PathBuf`] into the Unix-styled
-/// [`MaildirPath`] used by the io-maildir core.
-fn normalize_path(path: std::path::PathBuf) -> MaildirPath {
-    let s = path.to_string_lossy().into_owned();
-    #[cfg(windows)]
-    let s = s.replace('\\', "/");
-    MaildirPath::new(s)
 }

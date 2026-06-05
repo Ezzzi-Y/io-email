@@ -11,8 +11,8 @@ use io_imap::{
     codec::fragmentizer::Fragmentizer,
     coroutine::{ImapCoroutine, ImapCoroutineState, ImapYield},
     rfc3501::{
-        fetch::{ImapMessageFetch, ImapMessageFetchError},
-        select::{ImapMailboxSelect, ImapMailboxSelectError},
+        fetch::{ImapMessageFetch, ImapMessageFetchError, ImapMessageFetchOptions},
+        select::{ImapMailboxSelect, ImapMailboxSelectError, ImapMailboxSelectOptions},
     },
     types::fetch::{MacroOrMessageDataItemNames, MessageDataItem, MessageDataItemName},
 };
@@ -71,10 +71,17 @@ impl ImapMessageGet {
                 partial: None,
                 peek: true,
             }]);
-        let fetch = ImapMessageFetch::new(sequence_set, item_names, true);
+        let fetch = ImapMessageFetch::new(
+            sequence_set,
+            item_names,
+            ImapMessageFetchOptions {
+                uid: true,
+                ..Default::default()
+            },
+        );
         let state = if auto_select {
             State::Selecting {
-                select: ImapMailboxSelect::new(mbox),
+                select: ImapMailboxSelect::new(mbox, ImapMailboxSelectOptions::default()),
                 fetch,
             }
         } else {

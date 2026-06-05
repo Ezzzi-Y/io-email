@@ -21,11 +21,11 @@ use alloc::{
 
 use io_smtp::{
     coroutine::{SmtpCoroutine, SmtpCoroutineState, SmtpYield},
+    message::{SmtpMessageSend as InnerSend, SmtpMessageSendError as InnerErr},
     rfc5321::types::{
         domain::Domain, ehlo_domain::EhloDomain, forward_path::ForwardPath, local_part::LocalPart,
         mailbox::Mailbox as SmtpMailbox, reverse_path::ReversePath,
     },
-    send::{SmtpMessageSend as InnerSend, SmtpMessageSendError as InnerErr},
 };
 use log::trace;
 use mail_parser::{Address as MailParserAddress, MessageParser};

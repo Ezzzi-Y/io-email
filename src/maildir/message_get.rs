@@ -1,25 +1,25 @@
 //! Maildir message-get coroutine.
 //!
-//! Wraps [`io_maildir::coroutines::message_get::MaildirMessageGet`]:
-//! locates the message inside the resolved mailbox via the embedded
-//! `MaildirMessageLocate` (cur → new → tmp probing) and reads its raw
-//! RFC 5322 bytes.
+//! Wraps [`io_maildir::entry::get::MaildirEntryGet`]: locates the
+//! message inside the resolved mailbox via the embedded
+//! [`MaildirEntryLocate`](io_maildir::entry::locate::MaildirEntryLocate)
+//! (cur → new → tmp probing) and reads its raw RFC 5322 bytes.
 
 use alloc::vec::Vec;
-use std::path::PathBuf;
 
 use io_maildir::{
     coroutine::*,
-    coroutines::message_get::{
-        MaildirMessageGet as InnerMaildirMessageGet,
-        MaildirMessageGetError as InnerMaildirMessageGetError,
+    entry::get::{
+        MaildirEntryGet as InnerMaildirMessageGet,
+        MaildirEntryGetError as InnerMaildirMessageGetError,
     },
-    maildir::Maildir,
+    maildir::types::Maildir,
+    store::MaildirStore,
 };
 use log::trace;
 use thiserror::Error;
 
-use crate::maildir::convert::{InvalidMailboxName, resolve_mailbox};
+use crate::maildir::convert::{InvalidMailboxName, mailbox_path};
 
 /// Errors produced by [`MaildirMessageGet`].
 #[derive(Debug, Error)]
@@ -37,14 +37,13 @@ pub struct MaildirMessageGet {
 
 impl MaildirMessageGet {
     pub fn new(
-        root: impl Into<PathBuf>,
-        maildir_plus: bool,
+        store: &MaildirStore,
         mailbox: &str,
         id: &str,
     ) -> Result<Self, MaildirMessageGetError> {
         trace!("prepare Maildir message get");
-        let path = resolve_mailbox(&root.into(), maildir_plus, mailbox)?;
-        let maildir = Maildir::from_path(path);
+        let path = mailbox_path(mailbox)?;
+        let maildir = Maildir::from_path(store.resolve(&path));
         Ok(Self {
             inner: InnerMaildirMessageGet::new(maildir, id),
         })
@@ -61,8 +60,8 @@ impl MaildirCoroutine for MaildirMessageGet {
     ) -> MaildirCoroutineState<Self::Yield, Self::Return> {
         match self.inner.resume(arg) {
             MaildirCoroutineState::Yielded(y) => MaildirCoroutineState::Yielded(y),
-            MaildirCoroutineState::Complete(Ok(message)) => {
-                MaildirCoroutineState::Complete(Ok(message.into()))
+            MaildirCoroutineState::Complete(Ok(entry)) => {
+                MaildirCoroutineState::Complete(Ok(entry.into()))
             }
             MaildirCoroutineState::Complete(Err(err)) => {
                 MaildirCoroutineState::Complete(Err(err.into()))

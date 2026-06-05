@@ -12,9 +12,9 @@ use io_imap::{
     rfc3501::{
         copy::{
             ImapMessageCopy as InnerImapMessageCopy,
-            ImapMessageCopyError as InnerImapMessageCopyError,
+            ImapMessageCopyError as InnerImapMessageCopyError, ImapMessageCopyOptions,
         },
-        select::{ImapMailboxSelect, ImapMailboxSelectError},
+        select::{ImapMailboxSelect, ImapMailboxSelectError, ImapMailboxSelectOptions},
     },
 };
 use log::trace;
@@ -70,10 +70,11 @@ impl ImapMessageCopy {
         let src = parse_mailbox(from)?;
         let dst = parse_mailbox(to)?;
         let sequence_set = parse_uids(ids)?;
-        let copy = InnerImapMessageCopy::new(sequence_set, dst, true);
+        let copy =
+            InnerImapMessageCopy::new(sequence_set, dst, ImapMessageCopyOptions { uid: true });
         let state = if auto_select {
             State::Selecting {
-                select: ImapMailboxSelect::new(src),
+                select: ImapMailboxSelect::new(src, ImapMailboxSelectOptions::default()),
                 copy,
             }
         } else {

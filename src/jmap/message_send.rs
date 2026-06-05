@@ -22,16 +22,20 @@ use core::mem;
 use io_jmap::{
     coroutine::{JmapCoroutine, JmapCoroutineState, JmapYield},
     rfc8620::{
+        JmapSession,
         blob_upload::{JmapBlobUpload, JmapBlobUploadError, JmapBlobUploadOutput},
-        redirect::JmapRedirectYield,
-        session::JmapSession,
+        coroutine::JmapRedirectYield,
     },
     rfc8621::{
-        email::EmailImport,
-        email_import::{JmapEmailImport as InnerImport, JmapEmailImportError as ImportErr},
-        email_submission::EmailSubmissionCreate,
-        email_submission_set::{
-            JmapEmailSubmissionSet as InnerSubmit, JmapEmailSubmissionSetError as SubmitErr,
+        email::{
+            JmapEmailImportArgs,
+            import::{JmapEmailImport as InnerImport, JmapEmailImportError as ImportErr},
+        },
+        email_submission::{
+            JmapEmailSubmissionCreate,
+            set::{
+                JmapEmailSubmissionSet as InnerSubmit, JmapEmailSubmissionSetError as SubmitErr,
+            },
         },
     },
 };
@@ -132,7 +136,7 @@ impl JmapCoroutine for JmapMessageSend {
                     let mut emails = BTreeMap::new();
                     emails.insert(
                         OUTGOING.into(),
-                        EmailImport {
+                        JmapEmailImportArgs {
                             blob_id,
                             mailbox_ids,
                             keywords: Some(keywords),
@@ -176,7 +180,7 @@ impl JmapCoroutine for JmapMessageSend {
                     let mut submissions = BTreeMap::new();
                     submissions.insert(
                         OUTGOING.into(),
-                        EmailSubmissionCreate {
+                        JmapEmailSubmissionCreate {
                             identity_id: self.identity_id.clone(),
                             email_id,
                             envelope: None,

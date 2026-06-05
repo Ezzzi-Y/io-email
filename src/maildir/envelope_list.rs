@@ -1,7 +1,7 @@
 //! Maildir envelope-listing coroutine.
 //!
 //! Composes two io-maildir state machines:
-//! 1. [`MaildirMessagesList`] walks `cur/` + `new/` and returns one
+//! 1. [`MaildirEntryList`] walks `cur/` + `new/` and returns one
 //!    [`MaildirEntry`] per file.
 //! 2. A second pass batches the entry paths through
 //!    [`MaildirYield::WantsFileRead`]; the driver reads each file and
@@ -10,23 +10,20 @@
 //!
 //! Sorting is by `Date:` header descending; pagination is 1-indexed
 //! on the in-memory result.
-//!
-//! [`MaildirMessagesList`]: io_maildir::coroutines::message_list::MaildirMessagesList
 
 use alloc::{collections::BTreeSet, string::ToString, vec::Vec};
 use core::mem;
-use std::path::PathBuf;
 
 use chrono::DateTime;
 use io_maildir::{
     coroutine::*,
-    coroutines::message_list::{
-        MaildirMessagesList as InnerList, MaildirMessagesListError as InnerErr,
+    entry::{
+        list::{MaildirEntryList as InnerList, MaildirEntryListError as InnerErr},
+        types::{MaildirEntry, MaildirFullEntry},
     },
-    entry::MaildirEntry,
-    maildir::Maildir,
-    message::MaildirMessage,
-    path::MaildirPath,
+    maildir::types::Maildir,
+    path::FsPath,
+    store::MaildirStore,
 };
 use log::trace;
 use mail_parser::Address as MailParserAddress;
@@ -36,7 +33,7 @@ use crate::{
     address::Address,
     envelope::{Envelope, normalize_message_id},
     flag::Flag,
-    maildir::convert::{InvalidMailboxName, flag_from_char, paginate, resolve_mailbox},
+    maildir::convert::{InvalidMailboxName, flag_from_char, mailbox_path, paginate},
 };
 
 /// Errors produced by [`MaildirEnvelopeList`].
@@ -62,15 +59,14 @@ pub struct MaildirEnvelopeList {
 
 impl MaildirEnvelopeList {
     pub fn new(
-        root: impl Into<PathBuf>,
-        maildir_plus: bool,
+        store: &MaildirStore,
         mailbox: &str,
         page: Option<u32>,
         page_size: Option<u32>,
     ) -> Result<Self, MaildirEnvelopeListError> {
         trace!("prepare Maildir envelope listing");
-        let path = resolve_mailbox(&root.into(), maildir_plus, mailbox)?;
-        let maildir = Maildir::from_path(path);
+        let path = mailbox_path(mailbox)?;
+        let maildir = Maildir::from_path(store.resolve(&path));
         Ok(Self {
             state: State::Listing(InnerList::new(maildir)),
             page,
@@ -97,7 +93,7 @@ impl MaildirCoroutine for MaildirEnvelopeList {
                     if entries.is_empty() {
                         return MaildirCoroutineState::Complete(Ok(Vec::new()));
                     }
-                    let paths: BTreeSet<MaildirPath> =
+                    let paths: BTreeSet<FsPath> =
                         entries.iter().map(|e| e.path().clone()).collect();
                     self.state = State::Reading(entries);
                     MaildirCoroutineState::Yielded(MaildirYield::WantsFileRead(paths))
@@ -117,7 +113,7 @@ impl MaildirCoroutine for MaildirEnvelopeList {
                     .into_iter()
                     .filter_map(|entry| {
                         let bytes = contents.remove(entry.path())?;
-                        Some(envelope_from_message(&MaildirMessage::from((
+                        Some(envelope_from_entry(&MaildirFullEntry::from((
                             entry.path().clone(),
                             bytes,
                         ))))
@@ -141,13 +137,11 @@ enum State {
     Done,
 }
 
-/// Builds an [`Envelope`] from a Maildir message: filename letters
-/// for flags, RFC 5322 headers via mail-parser.
-fn envelope_from_message(message: &MaildirMessage) -> Envelope {
-    let id = message.id().unwrap_or_default().to_string();
-    let flags = parse_filename_flags(message.path());
-    let size = message.contents().len() as u64;
-    let parsed = message.parsed();
+fn envelope_from_entry(entry: &MaildirFullEntry) -> Envelope {
+    let id = entry.id().unwrap_or_default().to_string();
+    let flags = parse_filename_flags(entry.path());
+    let size = entry.contents().len() as u64;
+    let parsed = entry.parsed();
 
     let subject = parsed
         .as_ref()
@@ -194,7 +188,7 @@ fn envelope_from_message(message: &MaildirMessage) -> Envelope {
 
 /// Extracts the IANA flag set from a Maildir filename's info section.
 /// Letters outside the standard six are silently dropped.
-fn parse_filename_flags(path: &MaildirPath) -> BTreeSet<Flag> {
+fn parse_filename_flags(path: &FsPath) -> BTreeSet<Flag> {
     let Some(name) = path.file_name() else {
         return BTreeSet::new();
     };

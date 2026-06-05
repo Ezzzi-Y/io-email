@@ -515,16 +515,15 @@ impl ImapClientStd {
     feature = "native-tls"
 ))]
 impl ImapClientStd {
-    /// Opens a TCP / TLS connection to `url`, runs the optional
-    /// STARTTLS upgrade and the SASL authentication, then wraps the
-    /// authenticated stream with the io-email knobs.
+    /// Opens a TCP / TLS connection to `url`, runs the optional STARTTLS
+    /// upgrade and the SASL authentication, then wraps the authenticated stream
+    /// with the io-email knobs.
     ///
-    /// Delegates the protocol dance to
-    /// [`InnerImapClientStd::connect`], which also sets a 5 s read
-    /// timeout on the underlying socket so [`Self::watch_mailbox`]
-    /// can poll its shutdown flag at every timeout tick. `auto_id`
-    /// is forwarded to the inner connect and triggers an RFC 2971
-    /// `ID` round-trip after authentication (see
+    /// Delegates the protocol dance to [`InnerImapClientStd::connect`], which
+    /// also sets a 5 s read timeout on the underlying socket so
+    /// [`Self::watch_mailbox`] can poll its shutdown flag at every timeout
+    /// tick. `auto_id` is forwarded to the inner connect and triggers an RFC
+    /// 2971 `ID` round-trip after authentication (see
     /// [`InnerImapClientStd::auto_id`]).
     pub fn connect(
         url: &Url,
@@ -534,6 +533,7 @@ impl ImapClientStd {
         auto_id: Option<Vec<(IString<'static>, NString<'static>)>>,
     ) -> Result<Self, ImapClientError> {
         let (inner, capabilities) = InnerImapClientStd::connect(url, tls, starttls, sasl, auto_id)?;
+
         Ok(Self {
             inner,
             auto_select: true,

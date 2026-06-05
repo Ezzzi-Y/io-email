@@ -9,8 +9,10 @@ use core::mem;
 
 use io_jmap::{
     coroutine::{JmapCoroutine, JmapCoroutineState, JmapYield},
-    rfc8620::session::JmapSession,
-    rfc8621::email_set::{JmapEmailSet as InnerSet, JmapEmailSetArgs, JmapEmailSetError as SetErr},
+    rfc8620::JmapSession,
+    rfc8621::email::set::{
+        JmapEmailSet as InnerSet, JmapEmailSetArgs, JmapEmailSetError as SetErr,
+    },
 };
 use log::trace;
 use secrecy::SecretString;

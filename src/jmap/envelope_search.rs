@@ -6,9 +6,10 @@
 //! id.
 //!
 //! The shared filter AST is translated into a JMAP
-//! [`Filter<EmailFilter>`] tree: AND/OR/NOT map to
-//! [`FilterOperator`]s and leaves map to flat `EmailFilter`
-//! conditions. The mailbox scoping is added as a top-level AND.
+//! [`JmapFilter<JmapJmapEmailFilter>`] tree: AND/OR/NOT map to
+//! [`JmapFilterOperator`](io_jmap::rfc8620::JmapFilterOperator)s and
+//! leaves map to flat `JmapJmapEmailFilter` conditions. The mailbox
+//! scoping is added as a top-level AND.
 //!
 //! Date semantics: the shared DSL targets the `Date:` header
 //! (sent-at) while JMAP's `before` / `after` filter primitives are
@@ -25,10 +26,12 @@ use core::mem;
 use chrono::{Datelike, NaiveDate};
 use io_jmap::{
     coroutine::{JmapCoroutine, JmapCoroutineState, JmapYield},
-    rfc8620::{filter::Filter, session::JmapSession},
-    rfc8621::{
-        email::{EmailComparator, EmailFilter, EmailSortProperty},
-        email_query::{JmapEmailQuery as InnerQuery, JmapEmailQueryError as QueryErr},
+    rfc8620::{JmapFilter, JmapSession},
+    rfc8621::email::{
+        JmapEmailComparator, JmapEmailFilter, JmapEmailSortProperty,
+        query::{
+            JmapEmailQuery as InnerQuery, JmapEmailQueryError as QueryErr, JmapEmailQueryOptions,
+        },
     },
 };
 use log::trace;
@@ -95,15 +98,14 @@ impl JmapEnvelopeSearch {
             compute_position_limit(page, page_size)
         };
 
-        let inner = InnerQuery::new(
-            session,
-            http_auth,
-            Some(filter),
-            Some(sort),
+        let opts = JmapEmailQueryOptions {
+            filter: Some(filter),
+            sort: Some(sort),
             position,
             limit,
-            Some(envelope_properties()),
-        )?;
+            properties: Some(envelope_properties()),
+        };
+        let inner = InnerQuery::new(session, http_auth, opts)?;
         Ok(Self {
             state: State::Searching {
                 inner,
@@ -128,8 +130,8 @@ enum State {
 /// client-side predicates the coroutine must re-apply on the returned
 /// envelopes.
 struct Converted {
-    filter: Filter<EmailFilter>,
-    sort: Vec<EmailComparator>,
+    filter: JmapFilter<JmapEmailFilter>,
+    sort: Vec<JmapEmailComparator>,
     post_filters: Vec<PostFilter>,
 }
 
@@ -137,9 +139,9 @@ struct Converted {
 /// AND-scoped to `mailbox_id`; an empty user filter yields just the
 /// mailbox scope.
 fn build(query: Option<&SearchEmailsQuery>, mailbox_id: String) -> Converted {
-    let mailbox_scope = Filter::Condition(EmailFilter {
+    let mailbox_scope = JmapFilter::Condition(JmapEmailFilter {
         in_mailbox: Some(mailbox_id),
-        ..EmailFilter::default()
+        ..JmapEmailFilter::default()
     });
 
     let mut post_filters = Vec::new();
@@ -148,7 +150,7 @@ fn build(query: Option<&SearchEmailsQuery>, mailbox_id: String) -> Converted {
         .map(|f| convert_filter(f, &mut post_filters));
 
     let filter = match user_filter {
-        Some(uf) => Filter::and(vec![mailbox_scope, uf]),
+        Some(uf) => JmapFilter::and(vec![mailbox_scope, uf]),
         None => mailbox_scope,
     };
 
@@ -171,39 +173,39 @@ fn build(query: Option<&SearchEmailsQuery>, mailbox_id: String) -> Converted {
 fn convert_filter(
     node: &SearchEmailsFilterQuery,
     post_filters: &mut Vec<PostFilter>,
-) -> Filter<EmailFilter> {
+) -> JmapFilter<JmapEmailFilter> {
     use SearchEmailsFilterQuery as Q;
 
     match node {
-        Q::And(left, right) => Filter::and(vec![
+        Q::And(left, right) => JmapFilter::and(vec![
             convert_filter(left, post_filters),
             convert_filter(right, post_filters),
         ]),
-        Q::Or(left, right) => Filter::or(vec![
+        Q::Or(left, right) => JmapFilter::or(vec![
             convert_filter(left, post_filters),
             convert_filter(right, post_filters),
         ]),
-        Q::Not(inner) => Filter::not(vec![convert_filter(inner, post_filters)]),
+        Q::Not(inner) => JmapFilter::not(vec![convert_filter(inner, post_filters)]),
 
-        Q::From(pattern) => Filter::Condition(EmailFilter {
+        Q::From(pattern) => JmapFilter::Condition(JmapEmailFilter {
             from: Some(pattern.clone()),
-            ..EmailFilter::default()
+            ..JmapEmailFilter::default()
         }),
-        Q::To(pattern) => Filter::Condition(EmailFilter {
+        Q::To(pattern) => JmapFilter::Condition(JmapEmailFilter {
             to: Some(pattern.clone()),
-            ..EmailFilter::default()
+            ..JmapEmailFilter::default()
         }),
-        Q::Subject(pattern) => Filter::Condition(EmailFilter {
+        Q::Subject(pattern) => JmapFilter::Condition(JmapEmailFilter {
             subject: Some(pattern.clone()),
-            ..EmailFilter::default()
+            ..JmapEmailFilter::default()
         }),
-        Q::Body(pattern) => Filter::Condition(EmailFilter {
+        Q::Body(pattern) => JmapFilter::Condition(JmapEmailFilter {
             body: Some(pattern.clone()),
-            ..EmailFilter::default()
+            ..JmapEmailFilter::default()
         }),
-        Q::Flag(flag) => Filter::Condition(EmailFilter {
+        Q::Flag(flag) => JmapFilter::Condition(JmapEmailFilter {
             has_keyword: Some(keyword_from(flag)),
-            ..EmailFilter::default()
+            ..JmapEmailFilter::default()
         }),
 
         // Over-approximate via `after = start-of-day(D)` (the lowest
@@ -211,9 +213,9 @@ fn convert_filter(
         // sent-at constraint is re-checked client-side.
         Q::Date(target) => {
             post_filters.push(PostFilter::Date(*target));
-            Filter::Condition(EmailFilter {
+            JmapFilter::Condition(JmapEmailFilter {
                 after: Some(utc_midnight(*target)),
-                ..EmailFilter::default()
+                ..JmapEmailFilter::default()
             })
         }
         // Over-approximate via `after = start-of-day(D+1)` (the
@@ -222,9 +224,9 @@ fn convert_filter(
         Q::AfterDate(target) => {
             post_filters.push(PostFilter::AfterDate(*target));
             let bumped = target.succ_opt().unwrap_or(*target);
-            Filter::Condition(EmailFilter {
+            JmapFilter::Condition(JmapEmailFilter {
                 after: Some(utc_midnight(bumped)),
-                ..EmailFilter::default()
+                ..JmapEmailFilter::default()
             })
         }
     }
@@ -246,23 +248,23 @@ fn post_match(envelope: &Envelope, post_filters: &[PostFilter]) -> bool {
     })
 }
 
-fn sent_at_desc() -> EmailComparator {
-    EmailComparator {
-        property: EmailSortProperty::SentAt,
+fn sent_at_desc() -> JmapEmailComparator {
+    JmapEmailComparator {
+        property: JmapEmailSortProperty::SentAt,
         is_ascending: Some(false),
         collation: None,
         keyword: None,
     }
 }
 
-fn convert_sorter(sorter: &SearchEmailsSorter) -> EmailComparator {
+fn convert_sorter(sorter: &SearchEmailsSorter) -> JmapEmailComparator {
     let SearchEmailsSorter(kind, order) = sorter;
 
     let property = match kind {
-        SearchEmailsSorterKind::Date => EmailSortProperty::SentAt,
-        SearchEmailsSorterKind::From => EmailSortProperty::From,
-        SearchEmailsSorterKind::To => EmailSortProperty::To,
-        SearchEmailsSorterKind::Subject => EmailSortProperty::Subject,
+        SearchEmailsSorterKind::Date => JmapEmailSortProperty::SentAt,
+        SearchEmailsSorterKind::From => JmapEmailSortProperty::From,
+        SearchEmailsSorterKind::To => JmapEmailSortProperty::To,
+        SearchEmailsSorterKind::Subject => JmapEmailSortProperty::Subject,
     };
 
     let is_ascending = match order {
@@ -270,7 +272,7 @@ fn convert_sorter(sorter: &SearchEmailsSorter) -> EmailComparator {
         SearchEmailsSorterOrder::Descending => Some(false),
     };
 
-    EmailComparator {
+    JmapEmailComparator {
         property,
         is_ascending,
         collation: None,
@@ -348,7 +350,7 @@ mod tests {
     use alloc::boxed::Box;
 
     use chrono::{DateTime, NaiveDate};
-    use io_jmap::rfc8620::filter::{FilterOperator, FilterOperatorKind};
+    use io_jmap::rfc8620::{JmapFilterOperator, JmapFilterOperatorKind};
 
     use super::*;
     use crate::{address::Address, flag::Flag};
@@ -374,10 +376,10 @@ mod tests {
         }
     }
 
-    fn pluck_user_filter(filter: Filter<EmailFilter>) -> Filter<EmailFilter> {
+    fn pluck_user_filter(filter: JmapFilter<JmapEmailFilter>) -> JmapFilter<JmapEmailFilter> {
         // build() always wraps the user filter in `AND(mailbox_scope,
         // user_filter)` when a user filter is present.
-        let Filter::Operator(FilterOperator { conditions, .. }) = filter else {
+        let JmapFilter::Operator(JmapFilterOperator { conditions, .. }) = filter else {
             panic!("expected top-level AND combinator");
         };
         conditions.into_iter().nth(1).expect("expected user filter")
@@ -387,7 +389,7 @@ mod tests {
     fn empty_query_yields_just_the_mailbox_scope() {
         let c = build(None, "mbox-1".into());
         match c.filter {
-            Filter::Condition(EmailFilter {
+            JmapFilter::Condition(JmapEmailFilter {
                 in_mailbox: Some(id),
                 ..
             }) => assert_eq!(id, "mbox-1"),
@@ -395,7 +397,7 @@ mod tests {
         }
         assert!(c.post_filters.is_empty());
         assert_eq!(c.sort.len(), 1);
-        assert!(matches!(c.sort[0].property, EmailSortProperty::SentAt));
+        assert!(matches!(c.sort[0].property, JmapEmailSortProperty::SentAt));
         assert_eq!(c.sort[0].is_ascending, Some(false));
     }
 
@@ -410,14 +412,14 @@ mod tests {
         };
         let c = build(Some(&q), "mbox".into());
         let inner = pluck_user_filter(c.filter);
-        let Filter::Operator(FilterOperator {
+        let JmapFilter::Operator(JmapFilterOperator {
             operator,
             conditions,
         }) = inner
         else {
             panic!("expected OR operator");
         };
-        assert_eq!(operator, FilterOperatorKind::Or);
+        assert_eq!(operator, JmapFilterOperatorKind::Or);
         assert_eq!(conditions.len(), 2);
     }
 
@@ -431,14 +433,14 @@ mod tests {
         };
         let c = build(Some(&q), "mbox".into());
         let inner = pluck_user_filter(c.filter);
-        let Filter::Operator(FilterOperator {
+        let JmapFilter::Operator(JmapFilterOperator {
             operator,
             conditions,
         }) = inner
         else {
             panic!("expected NOT operator");
         };
-        assert_eq!(operator, FilterOperatorKind::Not);
+        assert_eq!(operator, JmapFilterOperatorKind::Not);
         assert_eq!(conditions.len(), 1);
     }
 
@@ -455,7 +457,7 @@ mod tests {
         ));
         let inner = pluck_user_filter(c.filter);
         match inner {
-            Filter::Condition(EmailFilter { after, .. }) => {
+            JmapFilter::Condition(JmapEmailFilter { after, .. }) => {
                 assert_eq!(after.as_deref(), Some("2026-01-15T00:00:00Z"));
             }
             other => panic!("expected condition, got {other:?}"),
@@ -475,7 +477,7 @@ mod tests {
         ));
         let inner = pluck_user_filter(c.filter);
         match inner {
-            Filter::Condition(EmailFilter { after, .. }) => {
+            JmapFilter::Condition(JmapEmailFilter { after, .. }) => {
                 assert_eq!(after.as_deref(), Some("2026-01-16T00:00:00Z"));
             }
             other => panic!("expected condition, got {other:?}"),
@@ -513,7 +515,7 @@ mod tests {
         let c = build(Some(&q), "mbox".into());
         let inner = pluck_user_filter(c.filter);
         match inner {
-            Filter::Condition(EmailFilter { has_keyword, .. }) => {
+            JmapFilter::Condition(JmapEmailFilter { has_keyword, .. }) => {
                 assert_eq!(has_keyword.as_deref(), Some("$flagged"));
             }
             other => panic!("expected condition, got {other:?}"),

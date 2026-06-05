@@ -3,26 +3,27 @@
 //! Maildir has no atomic "remove this message" primitive; the
 //! conventional approach is to mark the message with the `T`
 //! (Trashed) info-section letter and let a periodic expunge clean it
-//! up. This coroutine wraps
-//! [`io_maildir::coroutines::flags_add::MaildirFlagsAdd`] with the
-//! [`MaildirFlag::Trashed`] flag so a `delete_message` call on the
-//! shared API stays portable.
+//! up. This coroutine wraps [`io_maildir::flag::add::MaildirFlagsAdd`]
+//! with the [`MaildirFlag::Trashed`] flag so a `delete_message` call on
+//! the shared API stays portable.
 //!
-//! [`MaildirFlag::Trashed`]: io_maildir::flag::MaildirFlag::Trashed
+//! [`MaildirFlag::Trashed`]: io_maildir::flag::types::MaildirFlag::Trashed
 
 use core::iter::once;
-use std::path::PathBuf;
 
 use io_maildir::{
     coroutine::*,
-    coroutines::flags_add::{MaildirFlagsAdd as InnerAdd, MaildirFlagsAddError as InnerErr},
-    flag::MaildirFlag,
-    maildir::Maildir,
+    flag::{
+        add::{MaildirFlagsAdd as InnerAdd, MaildirFlagsAddError as InnerErr},
+        types::MaildirFlag,
+    },
+    maildir::types::Maildir,
+    store::MaildirStore,
 };
 use log::trace;
 use thiserror::Error;
 
-use crate::maildir::convert::{InvalidMailboxName, resolve_mailbox};
+use crate::maildir::convert::{InvalidMailboxName, mailbox_path};
 
 /// Errors produced by [`MaildirMessageDelete`].
 #[derive(Debug, Error)]
@@ -40,14 +41,13 @@ pub struct MaildirMessageDelete {
 
 impl MaildirMessageDelete {
     pub fn new(
-        root: impl Into<PathBuf>,
-        maildir_plus: bool,
+        store: &MaildirStore,
         mailbox: &str,
         id: &str,
     ) -> Result<Self, MaildirMessageDeleteError> {
         trace!("prepare Maildir message delete (Trashed flag)");
-        let path = resolve_mailbox(&root.into(), maildir_plus, mailbox)?;
-        let maildir = Maildir::from_path(path);
+        let path = mailbox_path(mailbox)?;
+        let maildir = Maildir::from_path(store.resolve(&path));
         let trashed = once(MaildirFlag::Trashed).collect();
         Ok(Self {
             inner: InnerAdd::new(maildir, id, trashed),

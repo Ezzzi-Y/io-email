@@ -190,9 +190,9 @@ dependencies = [
 
 [[package]]
 name = "chrono"
-version = "0.4.44"
+version = "0.4.45"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c673075a2e0e5f4a1dde27ce9dee1ea4558c7ffe648f576438a20ca1d2acc4b0"
+checksum = "1aa79e62e7697b8e29b513a68abacf485adcd1fe8284a4316c5ae868e6633327"
 dependencies = [
  "num-traits",
  "serde",
@@ -588,8 +588,9 @@ dependencies = [
 
 [[package]]
 name = "imap-codec"
-version = "2.0.0-alpha.7"
-source = "git+https://github.com/soywod/imap-codec#f1c29c7b5368063922778afdbcaefa18ed497a5e"
+version = "2.0.0-alpha.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a8848b8f674578cc2d884268a611aac82b9eb23d50aa9e84e00ffd939be8a7f7"
 dependencies = [
  "abnf-core",
  "base64",
@@ -602,7 +603,8 @@ dependencies = [
 [[package]]
 name = "imap-types"
 version = "2.0.0-alpha.6"
-source = "git+https://github.com/soywod/imap-codec#f1c29c7b5368063922778afdbcaefa18ed497a5e"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e31d8480b20e8416d52f20b737a159bd925219273aedb023caa12190ca42781c"
 dependencies = [
  "base64",
  "bounded-static",
@@ -674,8 +676,9 @@ dependencies = [
 
 [[package]]
 name = "io-http"
-version = "0.0.3"
-source = "git+https://github.com/pimalaya/io-http#23f3668558059c2db3603b1afdda5ce0f840e46a"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2381facba37467735d2eba5136f98dbc923e6c5e85d24ceba08a7c4a465a0391"
 dependencies = [
  "base64",
  "httparse",
@@ -688,8 +691,9 @@ dependencies = [
 
 [[package]]
 name = "io-imap"
-version = "0.0.1"
-source = "git+https://github.com/pimalaya/io-imap#b1b72a91e697ae5d411b3508e664503a014cce80"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c3abdd895505c9e96145abec34f7a3ef106e70bff71b04b0f116362c379d27e7"
 dependencies = [
  "anyhow",
  "base64",
@@ -703,8 +707,9 @@ dependencies = [
 
 [[package]]
 name = "io-jmap"
-version = "0.0.1"
-source = "git+https://github.com/pimalaya/io-jmap#18103bdbf883798b48566f6d45e4dfed8458d0e6"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4084b2d045dd22c09b1bddb97bc120203c470faf5f1dd0a003f9b3c8a7180282"
 dependencies = [
  "anyhow",
  "io-http",
@@ -719,17 +724,22 @@ dependencies = [
 
 [[package]]
 name = "io-m2dir"
-version = "0.0.1"
-source = "git+https://github.com/pimalaya/io-m2dir#0865b8301c49b2669d66fff93efdc02596cb4e66"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d33ce18041f2d4c02a543bc4f009a7e87de4114a97776e21301e46fac1cb92ea"
 dependencies = [
+ "base64",
  "log",
+ "mail-parser",
+ "percent-encoding",
  "thiserror",
 ]
 
 [[package]]
 name = "io-maildir"
-version = "0.0.1"
-source = "git+https://github.com/pimalaya/io-maildir#7cfb98c861a710a272ffdb48c330c6c744e289aa"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "478b84ec70aaca1691013579b1fd401084bc260536116e103155c68c691ecc31"
 dependencies = [
  "gethostname",
  "log",
@@ -739,8 +749,9 @@ dependencies = [
 
 [[package]]
 name = "io-smtp"
-version = "0.0.1"
-source = "git+https://github.com/pimalaya/io-smtp#8ade022516b83358d66772b74bd42216763b5ec3"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "85841fd5774b4ee2bd22e1c406bbd8a4a52f67098048362383d8af57d98b7208"
 dependencies = [
  "anyhow",
  "base64",
@@ -907,9 +918,9 @@ checksum = "92daf443525c4cce67b150400bc2316076100ce0b3686209eb8cf3c31612e6f0"
 
 [[package]]
 name = "log"
-version = "0.4.31"
+version = "0.4.32"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "113b30b4cd05f7c06868fdb2854f66a7b9fece9a48425351cd532e810d74024f"
+checksum = "953f07c43838f8e6f9758cab68bf5bed85465e7587ebe0b823f1bcd81978ad3a"
 
 [[package]]
 name = "mail-parser"
@@ -1089,7 +1100,8 @@ checksum = "9b4f627cb1b25917193a259e49bdad08f671f8d9708acfd5fe0a8c1455d87220"
 [[package]]
 name = "pimalaya-stream"
 version = "0.0.1"
-source = "git+https://github.com/pimalaya/stream#152911be92647ae47c2052c1bf1270f02eefbdd1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d6ad74860e4b47171dc19433a6115a993043583e8808384d0e32284f1b38526b"
 dependencies = [
  "anyhow",
  "log",
@@ -2126,9 +2138,9 @@ checksum = "1ffae5123b2d3fc086436f8834ae3ab053a283cfac8fe0a0b8eaae044768a4c4"
 
 [[package]]
 name = "yoke"
-version = "0.8.2"
+version = "0.8.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "abe8c5fda708d9ca3df187cae8bfb9ceda00dd96231bed36e445a1a48e66f9ca"
+checksum = "709fe23a0424b6a435d82152b1bd3fdfb0833487d5fa90d05d42762a9891fef5"
 dependencies = [
  "stable_deref_trait",
  "yoke-derive",

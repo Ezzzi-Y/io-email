@@ -6,7 +6,7 @@
 //! once per mailbox batch), the SELECT stage is skipped entirely.
 //!
 //! Shared by `add_flags` / `set_flags` / `delete_flags` via the
-//! [`FlagOp`] knob.
+//! [`FlagOp`] selector.
 //!
 //! [`auto_select`]: crate::client::ImapContext::auto_select
 
@@ -17,8 +17,8 @@ use io_imap::{
     codec::fragmentizer::Fragmentizer,
     coroutine::{ImapCoroutine, ImapCoroutineState, ImapYield},
     rfc3501::{
-        select::{ImapMailboxSelect, ImapMailboxSelectError},
-        store::{ImapMessageStore, ImapMessageStoreError},
+        select::{ImapMailboxSelect, ImapMailboxSelectError, ImapMailboxSelectOptions},
+        store::{ImapMessageStore, ImapMessageStoreError, ImapMessageStoreOptions},
     },
     types::flag::StoreType,
 };
@@ -88,10 +88,15 @@ impl ImapFlagStore {
             FlagOp::Remove => StoreType::Remove,
         };
 
-        let store = ImapMessageStore::new(sequence_set, kind, imap_flags, true);
+        let store = ImapMessageStore::new(
+            sequence_set,
+            kind,
+            imap_flags,
+            ImapMessageStoreOptions { uid: true },
+        );
         let state = if auto_select {
             State::Selecting {
-                select: ImapMailboxSelect::new(mbox),
+                select: ImapMailboxSelect::new(mbox, ImapMailboxSelectOptions::default()),
                 store,
             }
         } else {

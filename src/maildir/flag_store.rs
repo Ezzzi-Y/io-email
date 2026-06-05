@@ -7,29 +7,29 @@
 //! computes the new info-section letter set, and yields a single
 //! [`MaildirYield::WantsRename`].
 //!
-//! [`MaildirFlagsAdd`]: io_maildir::coroutines::flags_add::MaildirFlagsAdd
-//! [`MaildirFlagsSet`]: io_maildir::coroutines::flags_set::MaildirFlagsSet
-//! [`MaildirFlagsRemove`]: io_maildir::coroutines::flags_remove::MaildirFlagsRemove
+//! [`MaildirFlagsAdd`]: io_maildir::flag::add::MaildirFlagsAdd
+//! [`MaildirFlagsSet`]: io_maildir::flag::set::MaildirFlagsSet
+//! [`MaildirFlagsRemove`]: io_maildir::flag::remove::MaildirFlagsRemove
 
 use alloc::{collections::VecDeque, string::String};
-use std::path::PathBuf;
 
 use io_maildir::{
     coroutine::*,
-    coroutines::{
-        flags_add::{MaildirFlagsAdd as InnerAdd, MaildirFlagsAddError as AddErr},
-        flags_remove::{MaildirFlagsRemove as InnerRemove, MaildirFlagsRemoveError as RemoveErr},
-        flags_set::{MaildirFlagsSet as InnerSet, MaildirFlagsSetError as SetErr},
+    flag::{
+        add::{MaildirFlagsAdd as InnerAdd, MaildirFlagsAddError as AddErr},
+        remove::{MaildirFlagsRemove as InnerRemove, MaildirFlagsRemoveError as RemoveErr},
+        set::{MaildirFlagsSet as InnerSet, MaildirFlagsSetError as SetErr},
+        types::MaildirFlags,
     },
-    flag::MaildirFlags,
-    maildir::Maildir,
+    maildir::types::Maildir,
+    store::MaildirStore,
 };
 use log::trace;
 use thiserror::Error;
 
 use crate::{
     flag::{Flag, FlagOp},
-    maildir::convert::{InvalidMailboxName, flags_to_maildir, resolve_mailbox},
+    maildir::convert::{InvalidMailboxName, flags_to_maildir, mailbox_path},
 };
 
 /// Errors produced by [`MaildirFlagStore`].
@@ -56,16 +56,15 @@ pub struct MaildirFlagStore {
 
 impl MaildirFlagStore {
     pub fn new(
-        root: impl Into<PathBuf>,
-        maildir_plus: bool,
+        store: &MaildirStore,
         mailbox: &str,
         ids: &[&str],
         flags: &[Flag],
         op: FlagOp,
     ) -> Result<Self, MaildirFlagStoreError> {
         trace!("prepare Maildir flag store ({op:?})");
-        let path = resolve_mailbox(&root.into(), maildir_plus, mailbox)?;
-        let maildir = Maildir::from_path(path);
+        let path = mailbox_path(mailbox)?;
+        let maildir = Maildir::from_path(store.resolve(&path));
         let flags = flags_to_maildir(flags);
         let pending = ids.iter().map(|s| (*s).into()).collect();
         Ok(Self {

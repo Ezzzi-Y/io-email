@@ -1,10 +1,9 @@
 //! m2dir list-mailboxes coroutine.
 //!
-//! Wraps [`io_m2dir::coroutines::mailbox_list::M2dirMailboxList`]:
-//! walks the m2store depth-first and reports every directory carrying
-//! the `.m2dir` marker as a mailbox. Hidden entries (`.`-prefixed)
-//! are skipped; m2dirs can nest, so children are still walked after a
-//! match.
+//! Wraps [`io_m2dir::m2dir::list::M2dirList`]: walks the m2store
+//! depth-first and reports every directory carrying the `.m2dir`
+//! marker as a mailbox. Hidden entries (`.`-prefixed) are skipped;
+//! m2dirs can nest, so children are still walked after a match.
 //!
 //! `with_counts` is currently a no-op for the same reason it's a
 //! no-op on Maildir: surfacing totals/unread needs a follow-up walk
@@ -20,13 +19,15 @@ use std::path::PathBuf;
 
 use io_m2dir::{
     coroutine::*,
-    coroutines::mailbox_list::{
-        M2dirMailboxList as InnerM2dirMailboxList,
-        M2dirMailboxListError as InnerM2dirMailboxListError,
+    m2dir::{
+        list::{
+            M2dirList as InnerM2dirMailboxList, M2dirListError as InnerM2dirMailboxListError,
+            M2dirListOptions as InnerM2dirMailboxListOptions,
+        },
+        types::M2dir,
     },
-    m2dir::M2dir,
-    m2store::M2store,
     path::M2dirPath,
+    store::M2dirStore,
 };
 use log::trace;
 use thiserror::Error;
@@ -53,9 +54,9 @@ impl M2dirMailboxList {
     pub fn new(root: impl Into<PathBuf>, _with_counts: bool) -> Self {
         trace!("prepare m2dir mailbox listing");
         let path: M2dirPath = root.into().into();
-        let store = M2store::from_path(path);
+        let store = M2dirStore::from_path(path);
         Self {
-            inner: InnerM2dirMailboxList::new(&store),
+            inner: InnerM2dirMailboxList::new(&store, InnerM2dirMailboxListOptions::default()),
         }
     }
 }

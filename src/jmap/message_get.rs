@@ -18,13 +18,13 @@ use core::mem;
 use io_jmap::{
     coroutine::{JmapCoroutine, JmapCoroutineState, JmapYield},
     rfc8620::{
+        JmapSession,
         blob_download::{JmapBlobDownload, JmapBlobDownloadError, JmapBlobDownloadOutput},
-        redirect::JmapRedirectYield,
-        session::JmapSession,
+        coroutine::JmapRedirectYield,
     },
-    rfc8621::{
-        email::EmailProperty,
-        email_get::{JmapEmailGet as InnerGet, JmapEmailGetError as InnerErr},
+    rfc8621::email::{
+        JmapEmailProperty,
+        get::{JmapEmailGet as InnerGet, JmapEmailGetError as InnerErr, JmapEmailGetOptions},
     },
 };
 use log::trace;
@@ -69,15 +69,11 @@ impl JmapMessageGet {
         id: &str,
     ) -> Result<Self, JmapMessageGetError> {
         trace!("prepare JMAP message get");
-        let get = InnerGet::new(
-            session,
-            http_auth,
-            vec![id.to_string()],
-            Some(vec![EmailProperty::BlobId]),
-            false,
-            false,
-            0,
-        )?;
+        let opts = JmapEmailGetOptions {
+            properties: Some(vec![JmapEmailProperty::BlobId]),
+            ..Default::default()
+        };
+        let get = InnerGet::new(session, http_auth, vec![id.to_string()], opts)?;
         Ok(Self {
             state: State::GettingEmail(get),
             http_auth: http_auth.clone(),

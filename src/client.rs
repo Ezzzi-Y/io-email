@@ -26,20 +26,13 @@
 //! When no registered backend supports the op, the dispatch returns
 //! [`EmailClientStdError::NoBackendRegistered`].
 
-use alloc::{string::String, sync::Arc, vec::Vec};
 use core::sync::atomic::AtomicBool;
+
+use alloc::{string::String, sync::Arc, vec::Vec};
+
 use std::sync::mpsc::Sender;
 
 use thiserror::Error;
-
-#[cfg(feature = "search")]
-use crate::search::query::SearchEmailsQuery;
-use crate::{
-    envelope::{Envelope, EnvelopeDiff},
-    event::WatchEvent,
-    flag::{Flag, FlagOp},
-    mailbox::{Mailbox, MailboxDiff},
-};
 
 #[cfg(feature = "imap")]
 use crate::imap::client::{ImapClientError, ImapClientStd};
@@ -49,8 +42,16 @@ use crate::jmap::client::{JmapClientError, JmapClientStd};
 use crate::m2dir::client::{M2dirClient, M2dirClientError};
 #[cfg(feature = "maildir")]
 use crate::maildir::client::{MaildirClient, MaildirClientError};
+#[cfg(feature = "search")]
+use crate::search::query::SearchEmailsQuery;
 #[cfg(feature = "smtp")]
 use crate::smtp::client::{SmtpClientError, SmtpClientStd};
+use crate::{
+    envelope::{Envelope, EnvelopeDiff},
+    event::WatchEvent,
+    flag::{Flag, FlagOp},
+    mailbox::{Mailbox, MailboxDiff},
+};
 
 #[cfg(feature = "imap")]
 use io_imap::types::core::{IString, NString};

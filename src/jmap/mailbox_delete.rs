@@ -11,8 +11,8 @@ use core::mem;
 
 use io_jmap::{
     coroutine::{JmapCoroutine, JmapCoroutineState, JmapYield},
-    rfc8620::session::JmapSession,
-    rfc8621::mailbox_set::{
+    rfc8620::JmapSession,
+    rfc8621::mailbox::set::{
         JmapMailboxSet as InnerSet, JmapMailboxSetArgs, JmapMailboxSetError as SetErr,
     },
 };

@@ -1,6 +1,6 @@
 //! m2dir message-copy coroutine: per id, fetches the source bytes via
-//! [`M2dirMessageGet`] then writes them to the target via
-//! [`M2dirMessageStore`].
+//! [`M2dirEntryGet`] then writes them to the target via
+//! [`M2dirEntryStore`].
 //!
 //! Flags are not propagated across the copy: the m2dir flag layout
 //! lives in a separate `.meta/<id>.flags` sidecar whose payload is
@@ -9,8 +9,8 @@
 //! [`crate::client::EmailClientStd::add_flags`] after the copy
 //! completes.
 //!
-//! [`M2dirMessageGet`]: io_m2dir::coroutines::message_get::M2dirMessageGet
-//! [`M2dirMessageStore`]: io_m2dir::coroutines::message_store::M2dirMessageStore
+//! [`M2dirEntryGet`]: io_m2dir::entry::get::M2dirEntryGet
+//! [`M2dirEntryStore`]: io_m2dir::entry::store::M2dirEntryStore
 
 use alloc::{collections::VecDeque, string::String};
 use core::mem;
@@ -18,11 +18,17 @@ use std::path::PathBuf;
 
 use io_m2dir::{
     coroutine::*,
-    coroutines::{
-        message_get::{M2dirMessageGet as InnerGet, M2dirMessageGetError as GetErr},
-        message_store::{M2dirMessageStore as InnerStore, M2dirMessageStoreError as StoreErr},
+    entry::{
+        get::{
+            M2dirEntryGet as InnerGet, M2dirEntryGetError as GetErr,
+            M2dirEntryGetOptions as GetOpts,
+        },
+        store::{
+            M2dirEntryStore as InnerStore, M2dirEntryStoreError as StoreErr,
+            M2dirEntryStoreOptions as StoreOpts,
+        },
     },
-    m2dir::M2dir,
+    m2dir::types::M2dir,
 };
 use log::trace;
 use thiserror::Error;
@@ -85,7 +91,8 @@ impl M2dirCoroutine for M2dirMessageCopy {
                 let Some(id) = self.pending.pop_front() else {
                     return M2dirCoroutineState::Complete(Ok(()));
                 };
-                self.stage = Stage::Getting(InnerGet::new(self.source.clone(), id));
+                self.stage =
+                    Stage::Getting(InnerGet::new(self.source.clone(), id, GetOpts::default()));
             }
             match mem::replace(&mut self.stage, Stage::Idle) {
                 Stage::Idle => unreachable!(),
@@ -95,8 +102,11 @@ impl M2dirCoroutine for M2dirMessageCopy {
                         return M2dirCoroutineState::Yielded(y);
                     }
                     M2dirCoroutineState::Complete(Ok(ok)) => {
-                        self.stage =
-                            Stage::Storing(InnerStore::new(self.target.clone(), ok.contents));
+                        self.stage = Stage::Storing(InnerStore::new(
+                            self.target.clone(),
+                            ok.contents,
+                            StoreOpts::default(),
+                        ));
                     }
                     M2dirCoroutineState::Complete(Err(err)) => {
                         return M2dirCoroutineState::Complete(Err(err.into()));

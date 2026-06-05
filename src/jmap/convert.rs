@@ -9,10 +9,12 @@ use alloc::{
 };
 
 use chrono::{DateTime, FixedOffset};
-use io_jmap::rfc8620::session::JmapSession;
-use io_jmap::rfc8621::{
-    capabilities,
-    email::{Email, EmailAddress as JmapAddress, EmailProperty},
+use io_jmap::{
+    rfc8620::JmapSession,
+    rfc8621::{
+        MAIL_CAPABILITY,
+        email::{JmapEmail, JmapEmailAddress, JmapEmailProperty},
+    },
 };
 
 use crate::{
@@ -62,7 +64,7 @@ pub(crate) fn compute_position_limit(
 pub(crate) fn account_id_of(session: &JmapSession) -> String {
     session
         .primary_accounts
-        .get(capabilities::MAIL)
+        .get(MAIL_CAPABILITY)
         .cloned()
         .unwrap_or_default()
 }
@@ -70,22 +72,22 @@ pub(crate) fn account_id_of(session: &JmapSession) -> String {
 /// Properties requested from `Email/get` to populate an [`Envelope`].
 /// Uses `sentAt` (author-claimed `Date:`) rather than `receivedAt` for
 /// cross-backend consistency.
-pub(crate) fn envelope_properties() -> Vec<EmailProperty> {
+pub(crate) fn envelope_properties() -> Vec<JmapEmailProperty> {
     vec![
-        EmailProperty::Id,
-        EmailProperty::Keywords,
-        EmailProperty::Subject,
-        EmailProperty::From,
-        EmailProperty::To,
-        EmailProperty::SentAt,
-        EmailProperty::Size,
-        EmailProperty::HasAttachment,
-        EmailProperty::MessageId,
+        JmapEmailProperty::Id,
+        JmapEmailProperty::Keywords,
+        JmapEmailProperty::Subject,
+        JmapEmailProperty::From,
+        JmapEmailProperty::To,
+        JmapEmailProperty::SentAt,
+        JmapEmailProperty::Size,
+        JmapEmailProperty::HasAttachment,
+        JmapEmailProperty::MessageId,
     ]
 }
 
-/// Folds a JMAP [`Email`] object into the shared [`Envelope`] shape.
-pub(crate) fn envelope_from(email: Email) -> Envelope {
+/// Folds a JMAP [`JmapEmail`] object into the shared [`Envelope`] shape.
+pub(crate) fn envelope_from(email: JmapEmail) -> Envelope {
     let id = email.id.unwrap_or_default();
     let flags = email
         .keywords
@@ -128,7 +130,7 @@ pub(crate) fn envelope_from(email: Email) -> Envelope {
     }
 }
 
-fn address_from(addr: JmapAddress) -> Address {
+fn address_from(addr: JmapEmailAddress) -> Address {
     Address {
         name: addr.name,
         email: addr.email,

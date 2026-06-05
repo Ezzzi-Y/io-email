@@ -10,11 +10,11 @@ use std::path::PathBuf;
 
 use chrono::DateTime;
 use io_m2dir::{
-    entry::M2dirEntry,
-    flag::M2dirFlags,
-    m2dir::M2dir,
-    m2store::{M2store, NewFolderError},
+    entry::types::M2dirEntry,
+    flag::types::M2dirFlags,
+    m2dir::types::M2dir,
     path::M2dirPath,
+    store::{M2dirStore, M2dirStoreError},
 };
 use mail_parser::{Address as MailParserAddress, Message as ParsedMessage};
 use thiserror::Error;
@@ -29,18 +29,18 @@ use crate::{
 #[derive(Debug, Error)]
 pub enum InvalidMailboxName {
     #[error(transparent)]
-    NewFolder(#[from] NewFolderError),
+    Store(#[from] M2dirStoreError),
 }
 
-/// Builds an [`M2store`] handle from the shared root.
-pub(crate) fn store_from_root(root: impl Into<PathBuf>) -> M2store {
+/// Builds an [`M2dirStore`] handle from the shared root.
+pub(crate) fn store_from_root(root: impl Into<PathBuf>) -> M2dirStore {
     let path: M2dirPath = root.into().into();
-    M2store::from_path(path)
+    M2dirStore::from_path(path)
 }
 
 /// Resolves a mailbox name to its on-disk m2dir directory under the
 /// configured root. Honours the same `/`-separated convention as
-/// io-m2dir's `M2store::resolve_folder_path`.
+/// io-m2dir's `M2dirStore::resolve_folder_path`.
 pub(crate) fn resolve_mailbox(
     root: impl Into<PathBuf>,
     name: &str,

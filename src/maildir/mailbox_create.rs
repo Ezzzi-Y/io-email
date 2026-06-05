@@ -1,23 +1,21 @@
 //! Maildir mailbox-create coroutine.
 //!
-//! Wraps [`io_maildir::coroutines::maildir_create::MaildirCreate`]:
-//! creates the `<mailbox>/`, `<mailbox>/cur/`, `<mailbox>/new/` and
-//! `<mailbox>/tmp/` directories. The on-disk name is computed from
-//! the shared `(root, maildir_plus)` pair via [`resolve_mailbox`].
-
-use std::path::PathBuf;
+//! Wraps [`io_maildir::maildir::create::MaildirCreate`]: creates the
+//! `<mailbox>/`, `<mailbox>/cur/`, `<mailbox>/new/` and `<mailbox>/tmp/`
+//! directories. The on-disk name is computed from the configured
+//! [`MaildirStore`] (fs or Maildir++ layout).
 
 use io_maildir::{
     coroutine::*,
-    coroutines::maildir_create::{
+    maildir::create::{
         MaildirCreate as InnerMaildirCreate, MaildirCreateError as InnerMaildirCreateError,
     },
-    path::MaildirPath,
+    store::MaildirStore,
 };
 use log::trace;
 use thiserror::Error;
 
-use crate::maildir::convert::{InvalidMailboxName, resolve_mailbox};
+use crate::maildir::convert::{InvalidMailboxName, mailbox_path};
 
 /// Errors produced by [`MaildirMailboxCreate`].
 #[derive(Debug, Error)]
@@ -29,22 +27,17 @@ pub enum MaildirMailboxCreateError {
 }
 
 /// I/O-free coroutine creating a Maildir mailbox under the configured
-/// root.
+/// store.
 pub struct MaildirMailboxCreate {
     inner: InnerMaildirCreate,
 }
 
 impl MaildirMailboxCreate {
-    pub fn new(
-        root: impl Into<PathBuf>,
-        maildir_plus: bool,
-        name: &str,
-    ) -> Result<Self, MaildirMailboxCreateError> {
+    pub fn new(store: &MaildirStore, name: &str) -> Result<Self, MaildirMailboxCreateError> {
         trace!("prepare Maildir mailbox create");
-        let path = resolve_mailbox(&root.into(), maildir_plus, name)?;
-        let path: MaildirPath = path.into();
+        let path = mailbox_path(name)?;
         Ok(Self {
-            inner: InnerMaildirCreate::new(path),
+            inner: InnerMaildirCreate::new(store, path),
         })
     }
 }

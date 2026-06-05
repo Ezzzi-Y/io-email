@@ -1,22 +1,19 @@
 //! Maildir message-copy coroutine: copies every id from one Maildir to
-//! another by chaining
-//! [`io_maildir::coroutines::message_copy::MaildirMessageCopy`] per id.
-//! Target subdir reuses the source subdir.
+//! another by chaining [`io_maildir::entry::copy::MaildirEntryCopy`]
+//! per id. Target subdir reuses the source subdir.
 
 use alloc::{collections::VecDeque, string::String};
-use std::path::PathBuf;
 
 use io_maildir::{
     coroutine::*,
-    coroutines::message_copy::{
-        MaildirMessageCopy as InnerCopy, MaildirMessageCopyError as InnerErr,
-    },
-    maildir::Maildir,
+    entry::copy::{MaildirEntryCopy as InnerCopy, MaildirEntryCopyError as InnerErr},
+    maildir::types::Maildir,
+    store::MaildirStore,
 };
 use log::trace;
 use thiserror::Error;
 
-use crate::maildir::convert::{InvalidMailboxName, resolve_mailbox};
+use crate::maildir::convert::{InvalidMailboxName, mailbox_path};
 
 /// Errors produced by [`MaildirMessageCopy`].
 #[derive(Debug, Error)]
@@ -37,16 +34,14 @@ pub struct MaildirMessageCopy {
 
 impl MaildirMessageCopy {
     pub fn new(
-        root: impl Into<PathBuf>,
-        maildir_plus: bool,
+        store: &MaildirStore,
         from: &str,
         to: &str,
         ids: &[&str],
     ) -> Result<Self, MaildirMessageCopyError> {
         trace!("prepare Maildir message copy");
-        let root = root.into();
-        let source = Maildir::from_path(resolve_mailbox(&root, maildir_plus, from)?);
-        let target = Maildir::from_path(resolve_mailbox(&root, maildir_plus, to)?);
+        let source = Maildir::from_path(store.resolve(&mailbox_path(from)?));
+        let target = Maildir::from_path(store.resolve(&mailbox_path(to)?));
         Ok(Self {
             source,
             target,

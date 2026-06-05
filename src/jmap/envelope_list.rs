@@ -13,10 +13,12 @@ use core::mem;
 
 use io_jmap::{
     coroutine::{JmapCoroutine, JmapCoroutineState, JmapYield},
-    rfc8620::session::JmapSession,
-    rfc8621::{
-        email::EmailFilter,
-        email_query::{JmapEmailQuery as InnerQuery, JmapEmailQueryError as QueryErr},
+    rfc8620::JmapSession,
+    rfc8621::email::{
+        JmapEmailFilter,
+        query::{
+            JmapEmailQuery as InnerQuery, JmapEmailQueryError as QueryErr, JmapEmailQueryOptions,
+        },
     },
 };
 use log::trace;
@@ -52,19 +54,18 @@ impl JmapEnvelopeList {
     ) -> Result<Self, JmapEnvelopeListError> {
         trace!("prepare JMAP envelope listing");
         let (position, limit) = compute_position_limit(page, page_size);
-        let filter = EmailFilter {
+        let filter = JmapEmailFilter {
             in_mailbox: Some(mailbox.into()),
-            ..EmailFilter::default()
+            ..JmapEmailFilter::default()
         };
-        let inner = InnerQuery::new(
-            session,
-            http_auth,
-            Some(filter.into()),
-            None,
+        let opts = JmapEmailQueryOptions {
+            filter: Some(filter.into()),
             position,
             limit,
-            Some(envelope_properties()),
-        )?;
+            properties: Some(envelope_properties()),
+            ..Default::default()
+        };
+        let inner = InnerQuery::new(session, http_auth, opts)?;
         Ok(Self {
             state: State::Listing(inner),
         })

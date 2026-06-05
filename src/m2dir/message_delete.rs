@@ -1,15 +1,16 @@
 //! m2dir message-delete coroutine.
 //!
-//! Wraps [`io_m2dir::coroutines::message_delete::M2dirMessageDelete`]:
-//! locates the entry file, then removes both the entry and its
-//! `.meta/<id>.*` sidecar files.
+//! Wraps [`io_m2dir::entry::delete::M2dirEntryDelete`]: locates the
+//! entry file, then removes both the entry and its `.meta/<id>.*`
+//! sidecar files.
 
 use std::path::PathBuf;
 
 use io_m2dir::{
     coroutine::*,
-    coroutines::message_delete::{
-        M2dirMessageDelete as InnerDelete, M2dirMessageDeleteError as InnerErr,
+    entry::delete::{
+        M2dirEntryDelete as InnerDelete, M2dirEntryDeleteError as InnerErr,
+        M2dirEntryDeleteOptions as InnerOpts,
     },
 };
 use log::trace;
@@ -40,7 +41,7 @@ impl M2dirMessageDelete {
         trace!("prepare m2dir message delete");
         let m2dir = resolve_mailbox(root, mailbox)?;
         Ok(Self {
-            inner: InnerDelete::new(m2dir, id),
+            inner: InnerDelete::new(m2dir, id, InnerOpts::default()),
         })
     }
 }

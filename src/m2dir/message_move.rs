@@ -1,15 +1,15 @@
-//! m2dir message-move coroutine: per id, copies via
-//! [`M2dirMessageGet`] + [`M2dirMessageStore`], then removes the
-//! source entry via [`M2dirMessageDelete`].
+//! m2dir message-move coroutine: per id, copies via [`M2dirEntryGet`]
+//! + [`M2dirEntryStore`], then removes the source entry via
+//! [`M2dirEntryDelete`].
 //!
 //! Flag preservation across the move follows the same rule as
 //! [`M2dirMessageCopy`](super::message_copy::M2dirMessageCopy): the
 //! `.meta/<id>.flags` sidecar is not propagated. Callers add flags
 //! explicitly after the move when needed.
 //!
-//! [`M2dirMessageGet`]: io_m2dir::coroutines::message_get::M2dirMessageGet
-//! [`M2dirMessageStore`]: io_m2dir::coroutines::message_store::M2dirMessageStore
-//! [`M2dirMessageDelete`]: io_m2dir::coroutines::message_delete::M2dirMessageDelete
+//! [`M2dirEntryGet`]: io_m2dir::entry::get::M2dirEntryGet
+//! [`M2dirEntryStore`]: io_m2dir::entry::store::M2dirEntryStore
+//! [`M2dirEntryDelete`]: io_m2dir::entry::delete::M2dirEntryDelete
 
 use alloc::{collections::VecDeque, string::String};
 use core::mem;
@@ -17,12 +17,21 @@ use std::path::PathBuf;
 
 use io_m2dir::{
     coroutine::*,
-    coroutines::{
-        message_delete::{M2dirMessageDelete as InnerDelete, M2dirMessageDeleteError as DeleteErr},
-        message_get::{M2dirMessageGet as InnerGet, M2dirMessageGetError as GetErr},
-        message_store::{M2dirMessageStore as InnerStore, M2dirMessageStoreError as StoreErr},
+    entry::{
+        delete::{
+            M2dirEntryDelete as InnerDelete, M2dirEntryDeleteError as DeleteErr,
+            M2dirEntryDeleteOptions as DeleteOpts,
+        },
+        get::{
+            M2dirEntryGet as InnerGet, M2dirEntryGetError as GetErr,
+            M2dirEntryGetOptions as GetOpts,
+        },
+        store::{
+            M2dirEntryStore as InnerStore, M2dirEntryStoreError as StoreErr,
+            M2dirEntryStoreOptions as StoreOpts,
+        },
     },
-    m2dir::M2dir,
+    m2dir::types::M2dir,
 };
 use log::trace;
 use thiserror::Error;
@@ -90,7 +99,11 @@ impl M2dirCoroutine for M2dirMessageMove {
                 let Some(id) = self.pending.pop_front() else {
                     return M2dirCoroutineState::Complete(Ok(()));
                 };
-                self.stage = Stage::Getting(InnerGet::new(self.source.clone(), id.clone()));
+                self.stage = Stage::Getting(InnerGet::new(
+                    self.source.clone(),
+                    id.clone(),
+                    GetOpts::default(),
+                ));
                 self.current_id = Some(id);
             }
             match mem::replace(&mut self.stage, Stage::Idle) {
@@ -101,8 +114,11 @@ impl M2dirCoroutine for M2dirMessageMove {
                         return M2dirCoroutineState::Yielded(y);
                     }
                     M2dirCoroutineState::Complete(Ok(ok)) => {
-                        self.stage =
-                            Stage::Storing(InnerStore::new(self.target.clone(), ok.contents));
+                        self.stage = Stage::Storing(InnerStore::new(
+                            self.target.clone(),
+                            ok.contents,
+                            StoreOpts::default(),
+                        ));
                     }
                     M2dirCoroutineState::Complete(Err(err)) => {
                         return M2dirCoroutineState::Complete(Err(err.into()));
@@ -115,7 +131,11 @@ impl M2dirCoroutine for M2dirMessageMove {
                     }
                     M2dirCoroutineState::Complete(Ok(_entry)) => {
                         let id = self.current_id.take().expect("current_id set when storing");
-                        self.stage = Stage::Deleting(InnerDelete::new(self.source.clone(), id));
+                        self.stage = Stage::Deleting(InnerDelete::new(
+                            self.source.clone(),
+                            id,
+                            DeleteOpts::default(),
+                        ));
                     }
                     M2dirCoroutineState::Complete(Err(err)) => {
                         return M2dirCoroutineState::Complete(Err(err.into()));

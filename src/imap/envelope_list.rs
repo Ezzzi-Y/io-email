@@ -23,8 +23,8 @@ use io_imap::{
     codec::fragmentizer::Fragmentizer,
     coroutine::{ImapCoroutine, ImapCoroutineState, ImapYield},
     rfc3501::{
-        fetch::{ImapMessageFetch, ImapMessageFetchError},
-        select::{ImapMailboxSelect, ImapMailboxSelectError},
+        fetch::{ImapMessageFetch, ImapMessageFetchError, ImapMessageFetchOptions},
+        select::{ImapMailboxSelect, ImapMailboxSelectError, ImapMailboxSelectOptions},
     },
     types::{
         body::BodyStructure,
@@ -84,7 +84,7 @@ impl ImapEnvelopeList {
         let mbox = parse_mailbox(mailbox)?;
         Ok(Self {
             state: State::Selecting {
-                select: ImapMailboxSelect::new(mbox),
+                select: ImapMailboxSelect::new(mbox, ImapMailboxSelectOptions::default()),
                 page,
                 page_size,
                 item_names: build_item_names(with_attachment),
@@ -346,8 +346,11 @@ impl ImapCoroutine for ImapEnvelopeList {
                                 ));
                             }
                         };
-                        self.state =
-                            State::Fetching(ImapMessageFetch::new(sequence_set, item_names, false));
+                        self.state = State::Fetching(ImapMessageFetch::new(
+                            sequence_set,
+                            item_names,
+                            ImapMessageFetchOptions::default(),
+                        ));
                     }
                     ImapCoroutineState::Complete(Err(err)) => {
                         return ImapCoroutineState::Complete(Err(err.into()));

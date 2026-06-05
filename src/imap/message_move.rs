@@ -9,9 +9,10 @@ use core::mem;
 use io_imap::{
     codec::fragmentizer::Fragmentizer,
     coroutine::{ImapCoroutine, ImapCoroutineState, ImapYield},
-    rfc3501::select::{ImapMailboxSelect, ImapMailboxSelectError},
+    rfc3501::select::{ImapMailboxSelect, ImapMailboxSelectError, ImapMailboxSelectOptions},
     rfc6851::r#move::{
         ImapMessageMove as InnerImapMessageMove, ImapMessageMoveError as InnerImapMessageMoveError,
+        ImapMessageMoveOptions,
     },
 };
 use log::trace;
@@ -67,10 +68,10 @@ impl ImapMessageMove {
         let src = parse_mailbox(from)?;
         let dst = parse_mailbox(to)?;
         let sequence_set = parse_uids(ids)?;
-        let mv = InnerImapMessageMove::new(sequence_set, dst, true);
+        let mv = InnerImapMessageMove::new(sequence_set, dst, ImapMessageMoveOptions { uid: true });
         let state = if auto_select {
             State::Selecting {
-                select: ImapMailboxSelect::new(src),
+                select: ImapMailboxSelect::new(src, ImapMailboxSelectOptions::default()),
                 mv,
             }
         } else {

@@ -6,8 +6,8 @@ use alloc::{string::String, vec};
 
 use io_jmap::{
     coroutine::{JmapCoroutine, JmapCoroutineState, JmapYield},
-    rfc8620::session::JmapSession,
-    rfc8621::email_set::{
+    rfc8620::JmapSession,
+    rfc8621::email::set::{
         JmapEmailSet as InnerSet, JmapEmailSetArgs, JmapEmailSetError as InnerErr,
     },
 };

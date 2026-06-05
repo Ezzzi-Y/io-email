@@ -5,22 +5,29 @@
 //! per id. Each inner coroutine reads (and/or writes) the
 //! `.meta/<id>.flags` sidecar file.
 //!
-//! [`M2dirFlagAdd`]: io_m2dir::coroutines::flag_add::M2dirFlagAdd
-//! [`M2dirFlagSet`]: io_m2dir::coroutines::flag_set::M2dirFlagSet
-//! [`M2dirFlagRemove`]: io_m2dir::coroutines::flag_remove::M2dirFlagRemove
+//! [`M2dirFlagAdd`]: io_m2dir::flag::add::M2dirFlagAdd
+//! [`M2dirFlagSet`]: io_m2dir::flag::set::M2dirFlagSet
+//! [`M2dirFlagRemove`]: io_m2dir::flag::remove::M2dirFlagRemove
 
 use alloc::{collections::VecDeque, string::String};
 use std::path::PathBuf;
 
 use io_m2dir::{
     coroutine::*,
-    coroutines::{
-        flag_add::{M2dirFlagAdd as InnerAdd, M2dirFlagAddError as AddErr},
-        flag_remove::{M2dirFlagRemove as InnerRemove, M2dirFlagRemoveError as RemoveErr},
-        flag_set::{M2dirFlagSet as InnerSet, M2dirFlagSetError as SetErr},
+    flag::{
+        add::{
+            M2dirFlagAdd as InnerAdd, M2dirFlagAddError as AddErr, M2dirFlagAddOptions as AddOpts,
+        },
+        remove::{
+            M2dirFlagRemove as InnerRemove, M2dirFlagRemoveError as RemoveErr,
+            M2dirFlagRemoveOptions as RemoveOpts,
+        },
+        set::{
+            M2dirFlagSet as InnerSet, M2dirFlagSetError as SetErr, M2dirFlagSetOptions as SetOpts,
+        },
+        types::M2dirFlags,
     },
-    flag::M2dirFlags,
-    m2dir::M2dir,
+    m2dir::types::M2dir,
 };
 use log::trace;
 use thiserror::Error;
@@ -81,9 +88,11 @@ enum Stage {
 impl Stage {
     fn start(m2dir: &M2dir, id: String, flags: M2dirFlags, op: FlagOp) -> Self {
         match op {
-            FlagOp::Add => Stage::Add(InnerAdd::new(m2dir, id, flags)),
-            FlagOp::Set => Stage::Set(InnerSet::new(m2dir, id, flags)),
-            FlagOp::Remove => Stage::Remove(InnerRemove::new(m2dir, id, flags)),
+            FlagOp::Add => Stage::Add(InnerAdd::new(m2dir, id, flags, AddOpts::default())),
+            FlagOp::Set => Stage::Set(InnerSet::new(m2dir, id, flags, SetOpts::default())),
+            FlagOp::Remove => {
+                Stage::Remove(InnerRemove::new(m2dir, id, flags, RemoveOpts::default()))
+            }
         }
     }
 }

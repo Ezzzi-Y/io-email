@@ -1,56 +1,37 @@
 //! Shared helpers for the Maildir coroutines: flag conversions,
-//! mailbox-name to on-disk-path resolution, and `paginate` shared with
-//! the m2dir backend.
+//! logical-mailbox-name validation, and `paginate` shared with the
+//! m2dir backend.
 
 use alloc::{
     string::{String, ToString},
     vec::Vec,
 };
-use std::path::{Path, PathBuf};
 
-use io_maildir::flag::{MaildirFlag, MaildirFlags};
+use io_maildir::{
+    flag::types::{MaildirFlag, MaildirFlags},
+    path::MaildirPath,
+};
 use thiserror::Error;
 
 use crate::flag::{Flag, IanaFlag};
 
-/// Errors produced by [`resolve_mailbox`].
+/// Errors produced by [`mailbox_path`].
 #[derive(Clone, Debug, Error)]
 #[error("invalid Maildir mailbox `{0}`")]
 pub struct InvalidMailboxName(pub String);
 
-/// Translates a logical mailbox name to its on-disk Maildir directory,
-/// following the layout configured on the [`MaildirContext`]:
+/// Validates a logical mailbox `name` and returns the matching
+/// [`MaildirPath`]. The store handles the layout-aware translation
+/// to an on-disk path through its `maildirpp` switch.
 ///
-/// - classic Maildir (`maildir_plus = false`): identity (`Work` →
-///   `<root>/Work/`); slashes are rejected;
-/// - Maildir++ (`maildir_plus = true`): `/`-separated names become
-///   dotted siblings under the root (`Work/Foo` → `<root>/.Work.Foo/`),
-///   and the empty string (or `INBOX`-like default handled by the
-///   caller) maps to the root itself.
-///
-/// [`MaildirContext`]: crate::client::MaildirContext
-pub(crate) fn resolve_mailbox(
-    root: &Path,
-    maildir_plus: bool,
-    name: &str,
-) -> Result<PathBuf, InvalidMailboxName> {
-    if maildir_plus {
-        let trimmed = name.trim_matches('/');
-        if trimmed.is_empty() {
-            return Ok(root.to_path_buf());
-        }
-        let mut physical = String::from(".");
-        physical.push_str(&trimmed.replace('/', "."));
-        return Ok(root.join(physical));
-    }
-
-    if name.contains('/') || name.contains("..") {
+/// - empty name maps to the store root (INBOX-equivalent under
+///   Maildir++);
+/// - `..` segments are rejected so callers cannot escape the store.
+pub(crate) fn mailbox_path(name: &str) -> Result<MaildirPath, InvalidMailboxName> {
+    if name.split('/').any(|seg| seg == "..") {
         return Err(InvalidMailboxName(name.to_string()));
     }
-    if name.is_empty() {
-        return Err(InvalidMailboxName(name.to_string()));
-    }
-    Ok(root.join(name))
+    Ok(MaildirPath::from(name))
 }
 
 /// Maps a shared [`Flag`] onto a [`MaildirFlag`]. Non-IANA keywords

@@ -1,30 +1,28 @@
 //! Maildir message-add coroutine.
 //!
-//! Wraps [`io_maildir::coroutines::message_store::MaildirMessageStore`]:
-//! writes the raw bytes to `tmp/`, then renames into `cur/` with the
-//! info-section letters derived from `flags`. The yielded id is the
-//! Maildir filename minus the `:2,FLAGS` suffix.
+//! Wraps [`io_maildir::entry::store::MaildirEntryStore`]: writes the
+//! raw bytes to `tmp/`, then renames into `cur/` with the info-section
+//! letters derived from `flags`. The yielded id is the Maildir filename
+//! minus the `:2,FLAGS` suffix.
 //!
-//! `MaildirMessageStore` itself probes time / pid / hostname to mint
-//! the message identifier (RFC's `time.usec.hostname` convention), so
-//! this coroutine relays those `Wants*` variants through.
+//! `MaildirEntryStore` itself probes time / pid / hostname to mint the
+//! message identifier (RFC's `time.usec.hostname` convention), so this
+//! coroutine relays those `Wants*` variants through.
 
 use alloc::{string::String, vec::Vec};
-use std::path::PathBuf;
 
 use io_maildir::{
     coroutine::*,
-    coroutines::message_store::{
-        MaildirMessageStore as InnerStore, MaildirMessageStoreError as InnerErr,
-    },
-    maildir::{Maildir, MaildirSubdir},
+    entry::store::{MaildirEntryStore as InnerStore, MaildirEntryStoreError as InnerErr},
+    maildir::types::{Maildir, MaildirSubdir},
+    store::MaildirStore,
 };
 use log::trace;
 use thiserror::Error;
 
 use crate::{
     flag::Flag,
-    maildir::convert::{InvalidMailboxName, flags_to_maildir, resolve_mailbox},
+    maildir::convert::{InvalidMailboxName, flags_to_maildir, mailbox_path},
 };
 
 /// Errors produced by [`MaildirMessageAdd`].
@@ -43,15 +41,14 @@ pub struct MaildirMessageAdd {
 
 impl MaildirMessageAdd {
     pub fn new(
-        root: impl Into<PathBuf>,
-        maildir_plus: bool,
+        store: &MaildirStore,
         mailbox: &str,
         flags: &[Flag],
         bytes: Vec<u8>,
     ) -> Result<Self, MaildirMessageAddError> {
         trace!("prepare Maildir message add");
-        let path = resolve_mailbox(&root.into(), maildir_plus, mailbox)?;
-        let maildir = Maildir::from_path(path);
+        let path = mailbox_path(mailbox)?;
+        let maildir = Maildir::from_path(store.resolve(&path));
         let md_flags = flags_to_maildir(flags);
         Ok(Self {
             inner: InnerStore::new(maildir, MaildirSubdir::Cur, md_flags, bytes),

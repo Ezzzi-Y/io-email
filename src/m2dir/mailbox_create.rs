@@ -1,6 +1,6 @@
 //! m2dir mailbox-create coroutine.
 //!
-//! Wraps [`io_m2dir::coroutines::mailbox_create::M2dirMailboxCreate`]:
+//! Wraps [`io_m2dir::mailbox::create::M2dirMailboxCreate`]:
 //! creates `<root>/<name>/` plus the `.m2dir` marker and `.meta/`
 //! subdirectory.
 
@@ -8,10 +8,10 @@ use std::path::PathBuf;
 
 use io_m2dir::{
     coroutine::*,
-    coroutines::mailbox_create::{
-        M2dirMailboxCreate as InnerCreate, M2dirMailboxCreateError as InnerErr,
+    m2dir::create::{
+        M2dirCreate as InnerCreate, M2dirCreateError as InnerErr, M2dirCreateOptions as InnerOpts,
     },
-    m2store::NewFolderError,
+    store::M2dirStoreError,
 };
 use log::trace;
 use thiserror::Error;
@@ -24,7 +24,7 @@ pub enum M2dirMailboxCreateError {
     #[error(transparent)]
     Create(#[from] InnerErr),
     #[error(transparent)]
-    InvalidMailbox(#[from] NewFolderError),
+    InvalidMailbox(#[from] M2dirStoreError),
 }
 
 /// I/O-free coroutine creating an m2dir mailbox under the m2store root.
@@ -36,7 +36,7 @@ impl M2dirMailboxCreate {
     pub fn new(root: impl Into<PathBuf>, name: &str) -> Result<Self, M2dirMailboxCreateError> {
         trace!("prepare m2dir mailbox create");
         let store = store_from_root(root);
-        let inner = InnerCreate::new(&store, name)?;
+        let inner = InnerCreate::new(&store, name, InnerOpts::default())?;
         Ok(Self { inner })
     }
 }

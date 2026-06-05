@@ -15,10 +15,13 @@ use alloc::{vec, vec::Vec};
 
 use io_jmap::{
     coroutine::{JmapCoroutine, JmapCoroutineState, JmapYield},
-    rfc8620::session::JmapSession,
-    rfc8621::{
-        mailbox::{Mailbox as JmapMailbox, MailboxProperty},
-        mailbox_query::{JmapMailboxQuery, JmapMailboxQueryError, JmapMailboxQueryOutput},
+    rfc8620::JmapSession,
+    rfc8621::mailbox::{
+        JmapMailbox as JmapMailboxObject, JmapMailboxProperty,
+        query::{
+            JmapMailboxQuery, JmapMailboxQueryError, JmapMailboxQueryOptions,
+            JmapMailboxQueryOutput,
+        },
     },
 };
 use log::trace;
@@ -55,24 +58,20 @@ impl JmapMailboxList {
         trace!("prepare JMAP mailbox listing (with_counts={with_counts})");
         let properties = if with_counts {
             vec![
-                MailboxProperty::Id,
-                MailboxProperty::Name,
-                MailboxProperty::TotalEmails,
-                MailboxProperty::UnreadEmails,
+                JmapMailboxProperty::Id,
+                JmapMailboxProperty::Name,
+                JmapMailboxProperty::TotalEmails,
+                JmapMailboxProperty::UnreadEmails,
             ]
         } else {
-            vec![MailboxProperty::Id, MailboxProperty::Name]
+            vec![JmapMailboxProperty::Id, JmapMailboxProperty::Name]
+        };
+        let opts = JmapMailboxQueryOptions {
+            properties: Some(properties),
+            ..Default::default()
         };
         Ok(Self {
-            inner: JmapMailboxQuery::new(
-                session,
-                http_auth,
-                None,
-                None,
-                None,
-                None,
-                Some(properties),
-            )?,
+            inner: JmapMailboxQuery::new(session, http_auth, opts)?,
         })
     }
 }
@@ -82,10 +81,10 @@ impl JmapMailboxList {
 ///
 /// JMAP-specific fields (role, parent_id, sort_order, threads,
 /// rights, subscription) are dropped on purpose: they're not part of
-/// the LCD surface. Counts always populate from the wire — the caller
+/// the LCD surface. Counts always populate from the wire: the caller
 /// requested the matching properties via `with_counts`, so a
 /// deserialized `0` from a "not requested" payload is on them, not us.
-fn mailbox_from(mailbox: JmapMailbox) -> Mailbox {
+fn mailbox_from(mailbox: JmapMailboxObject) -> Mailbox {
     Mailbox {
         id: mailbox.id.unwrap_or_default(),
         name: mailbox.name.unwrap_or_default(),

@@ -3,10 +3,9 @@
 //!
 //! The point of this example isn't to be a useful client (no TLS, no
 //! greeting / login, no QRESYNC) but to exercise the
-//! [`EmailCoroutine`] / [`EmailCoroutineArg`] / [`CoroutineState`]
-//! triad against tokio's `AsyncRead` / `AsyncWrite` and see whether
-//! the `'a` lifetime on [`EmailCoroutineArg`] introduces friction
-//! across `.await` points.
+//! [`ImapCoroutine`] / [`ImapCoroutineState`] / [`ImapYield`] triad
+//! against tokio's `AsyncRead` / `AsyncWrite` and see whether anything
+//! introduces friction across `.await` points.
 //!
 //! Run against a plain IMAP server (no TLS) with:
 //!
@@ -22,11 +21,11 @@
 
 use std::{env, error::Error};
 
-use io_email::{
-    coroutine::{EmailCoroutine, EmailCoroutineArg, EmailCoroutineState, ImapStep},
-    imap::mailbox_list::{ImapMailboxList, ImapMailboxListError},
+use io_email::imap::mailbox_list::{ImapMailboxList, ImapMailboxListError};
+use io_imap::{
+    codec::fragmentizer::Fragmentizer,
+    coroutine::{ImapCoroutine, ImapCoroutineState, ImapYield},
 };
-use io_imap::codec::fragmentizer::Fragmentizer;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::TcpStream,
@@ -64,34 +63,24 @@ impl ImapTokioContext {
 /// only `read` / `write_all` gained an `.await`.
 async fn run_imap<C, O, E>(ctx: &mut ImapTokioContext, mut coroutine: C) -> Result<O, TokioRunError>
 where
-    C: EmailCoroutine<Yield = ImapStep, Return = Result<O, E>>,
+    C: ImapCoroutine<Yield = ImapYield, Return = Result<O, E>>,
     TokioRunError: From<E>,
 {
     let mut buf = [0u8; READ_BUFFER_SIZE];
     let mut bytes: Option<&[u8]> = None;
 
     loop {
-        let arg = EmailCoroutineArg::Imap {
-            fragmentizer: &mut ctx.fragmentizer,
-            bytes,
-        };
-
-        match coroutine.resume(arg) {
-            EmailCoroutineState::Yielded(ImapStep::WantsRead) => {
-                // After `resume` consumed `arg`, the borrow on `buf`
-                // carried by the previous `bytes` is dead; the borrow
-                // on `ctx.fragmentizer` likewise. So `read` can take
-                // `&mut buf` and the `.await` parks without holding
-                // any stale borrow.
+        match coroutine.resume(&mut ctx.fragmentizer, bytes) {
+            ImapCoroutineState::Yielded(ImapYield::WantsRead) => {
                 let n = ctx.stream.read(&mut buf).await?;
                 bytes = Some(&buf[..n]);
             }
-            EmailCoroutineState::Yielded(ImapStep::WantsWrite(out)) => {
+            ImapCoroutineState::Yielded(ImapYield::WantsWrite(out)) => {
                 ctx.stream.write_all(&out).await?;
                 bytes = None;
             }
-            EmailCoroutineState::Complete(Ok(out)) => return Ok(out),
-            EmailCoroutineState::Complete(Err(err)) => return Err(err.into()),
+            ImapCoroutineState::Complete(Ok(out)) => return Ok(out),
+            ImapCoroutineState::Complete(Err(err)) => return Err(err.into()),
         }
     }
 }
@@ -119,9 +108,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 }
 
 /// Compile-time check that the driver future is `Send` (i.e. can be
-/// `tokio::spawn`-ed). If `EmailCoroutineArg`'s `'a` lifetime held a
-/// stale borrow across an `.await` point, this would fail to type-check
-/// with `future cannot be sent between threads safely`.
+/// `tokio::spawn`-ed).
 #[allow(
     dead_code,
     unreachable_code,

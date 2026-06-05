@@ -10,8 +10,8 @@ use alloc::{string::String, vec::Vec};
 
 use io_jmap::{
     client::JmapClientStdError,
-    rfc8620::{changes::JmapChangesError, error::JmapMethodError},
-    rfc8621::email_changes::JmapEmailChangesError,
+    rfc8620::{JmapMethodError, changes::JmapChangesError},
+    rfc8621::email::changes::JmapEmailChangesError,
 };
 
 /// `Email/state` is opaque on the wire; we just pass its UTF-8 bytes

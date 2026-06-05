@@ -6,12 +6,10 @@ use alloc::{collections::BTreeMap, string::String};
 
 use io_jmap::{
     coroutine::{JmapCoroutine, JmapCoroutineState, JmapYield},
-    rfc8620::session::JmapSession,
-    rfc8621::{
-        mailbox::MailboxCreate,
-        mailbox_set::{
-            JmapMailboxSet as InnerSet, JmapMailboxSetArgs, JmapMailboxSetError as InnerErr,
-        },
+    rfc8620::JmapSession,
+    rfc8621::mailbox::{
+        JmapMailboxCreate as Patch,
+        set::{JmapMailboxSet as InnerSet, JmapMailboxSetArgs, JmapMailboxSetError as InnerErr},
     },
 };
 use log::trace;
@@ -44,9 +42,9 @@ impl JmapMailboxCreate {
         let mut create = BTreeMap::new();
         create.insert(
             client_id.clone(),
-            MailboxCreate {
+            Patch {
                 name: Some(name.into()),
-                ..MailboxCreate::default()
+                ..Patch::default()
             },
         );
         let args = JmapMailboxSetArgs {

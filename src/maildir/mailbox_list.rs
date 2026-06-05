@@ -1,10 +1,9 @@
 //! Maildir list-mailboxes coroutine.
 //!
-//! Wraps [`io_maildir::coroutines::maildir_list::MaildirList`]: scans
-//! the root directory and probes each candidate child for the
-//! `cur/` + `new/` + `tmp/` triad. With `maildir_plus` set, dotted
-//! (`.`-prefixed) siblings and the root itself also count, matching
-//! Maildir++ where folders live as siblings of the inbox.
+//! Wraps [`io_maildir::maildir::list::MaildirList`]: scans the store
+//! root and probes each candidate child for the `cur/` + `new/` +
+//! `tmp/` triad. The layout (fs vs Maildir++) is read from the
+//! [`MaildirStore`] passed at construction time.
 //!
 //! `with_counts` is currently a no-op: surfacing totals/unread would
 //! need a follow-up directory walk over each maildir's `cur/` + `new/`
@@ -20,9 +19,11 @@ use alloc::{string::ToString, vec::Vec};
 
 use io_maildir::{
     coroutine::*,
-    coroutines::maildir_list::{MaildirList as InnerMaildirList, MaildirListError},
-    maildir::Maildir,
-    path::MaildirPath,
+    maildir::{
+        list::{MaildirList as InnerMaildirList, MaildirListError},
+        types::Maildir,
+    },
+    store::MaildirStore,
 };
 use log::trace;
 use thiserror::Error;
@@ -36,25 +37,24 @@ pub enum MaildirMailboxListError {
     List(#[from] MaildirListError),
 }
 
-/// I/O-free coroutine listing every Maildir under `root`.
+/// I/O-free coroutine listing every Maildir under the store root.
 pub struct MaildirMailboxList {
     inner: InnerMaildirList,
 }
 
 impl MaildirMailboxList {
-    /// `MaildirList` against `root`. `maildir_plus` flips both
-    /// `include_dotted` and `include_root` so Maildir++ layouts
-    /// surface the inbox alongside its dotted siblings.
+    /// `MaildirList` against `store`'s configured layout.
     ///
     /// `_with_counts` is accepted for symmetry with the other backends
     /// but currently ignored; see the module doc for the path to
     /// surfacing counts.
-    pub fn new(root: impl Into<MaildirPath>, maildir_plus: bool, _with_counts: bool) -> Self {
-        trace!("prepare Maildir mailbox listing (maildir_plus={maildir_plus})");
+    pub fn new(store: &MaildirStore, _with_counts: bool) -> Self {
+        trace!(
+            "prepare Maildir mailbox listing (maildirpp={})",
+            store.maildirpp
+        );
         Self {
-            inner: InnerMaildirList::new(root)
-                .include_dotted(maildir_plus)
-                .include_root(maildir_plus),
+            inner: InnerMaildirList::new(store),
         }
     }
 }
@@ -85,7 +85,7 @@ impl MaildirCoroutine for MaildirMailboxList {
 ///
 /// `id` is the on-disk path so downstream ops can locate the maildir;
 /// `name` is the last path segment (Maildir++ dotted names are kept
-/// verbatim — decoding is the caller's responsibility for now).
+/// verbatim: decoding is the caller's responsibility for now).
 /// Counts default to `None`; populating them needs the follow-up walk
 /// described in the module doc.
 fn mailbox_from(maildir: Maildir) -> Mailbox {

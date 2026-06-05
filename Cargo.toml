@@ -17,7 +17,7 @@ all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 
 [features]
-default = ["client"]
+default = ["rustls-ring", "imap", "jmap", "smtp", "maildir", "m2dir", "search", "serde"]
 client = ["pimalaya-stream/std", "io-imap?/client", "io-jmap?/client", "io-smtp?/client"]
 imap = ["dep:io-imap", "dep:mail-parser", "dep:rfc2047-decoder", "dep:uuid"]
 jmap = ["dep:io-jmap", "dep:io-http", "dep:secrecy", "dep:url"]
@@ -30,16 +30,25 @@ rustls-ring = ["client", "pimalaya-stream/rustls-ring", "io-imap?/rustls-ring", 
 rustls-aws = ["client", "pimalaya-stream/rustls-aws", "io-imap?/rustls-aws", "io-jmap?/rustls-aws", "io-smtp?/rustls-aws", "dep:url"]
 native-tls = ["client", "pimalaya-stream/native-tls", "io-imap?/native-tls", "io-jmap?/native-tls", "io-smtp?/native-tls", "dep:url"]
 
+[[example]]
+name = "tokio_imap_list_mailboxes"
+required-features = ["client", "imap"]
+
+[dev-dependencies]
+env_logger = "0.11"
+tempfile = "3"
+tokio = { version = "1", features = ["io-util", "macros", "net", "rt"] }
+
 [dependencies]
 chrono = { version = "0.4", default-features = false, features = ["alloc"] }
 chumsky = { version = "0.13", default-features = false, optional = true }
 gethostname = { version = "1", optional = true }
-io-http = { version = "0.0.3", default-features = false, optional = true }
-io-imap = { version = "0.0.1", default-features = false, optional = true }
-io-jmap = { version = "0.0.1", default-features = false, optional = true }
-io-m2dir = { version = "0.0.1", default-features = false, optional = true }
-io-maildir = { version = "0.0.1", default-features = false, optional = true }
-io-smtp = { version = "0.0.1", default-features = false, optional = true }
+io-http = { version = "0.1", default-features = false, optional = true }
+io-imap = { version = "0.1", default-features = false, optional = true }
+io-jmap = { version = "0.1", default-features = false, optional = true }
+io-m2dir = { version = "0.1", default-features = false, optional = true }
+io-maildir = { version = "0.1", default-features = false, optional = true }
+io-smtp = { version = "0.1", default-features = false, optional = true }
 log = { version = "0.4", default-features = false }
 mail-parser = { version = "0.11", optional = true }
 notify = { version = "8", optional = true, default-features = false, features = ["macos_kqueue"] }
@@ -51,17 +60,7 @@ thiserror = { version = "2", default-features = false }
 url = { version = "2.5", default-features = false, optional = true }
 uuid = { version = "1.19", features = ["v4"], optional = true }
 
-[dev-dependencies]
-env_logger = "0.11"
-tempfile = "3"
-tokio = { version = "1", features = ["io-util", "macros", "net", "rt"] }
-
-[[example]]
-name = "tokio_imap_list_mailboxes"
-required-features = ["client", "imap"]
-
-# [patch.crates-io]
-# imap-codec.git = "https://github.com/soywod/imap-codec"
+# [patch.crates-io] # local path
 # io-http.path = "../io-http"
 # io-imap.path = "../io-imap"
 # io-jmap.path = "../io-jmap"
@@ -70,12 +69,11 @@ required-features = ["client", "imap"]
 # io-smtp.path = "../io-smtp"
 # pimalaya-stream.path = "../stream"
 
-[patch.crates-io]
-imap-codec.git = "https://github.com/soywod/imap-codec"
-io-http.git = "https://github.com/pimalaya/io-http"
-io-imap.git = "https://github.com/pimalaya/io-imap"
-io-jmap.git = "https://github.com/pimalaya/io-jmap"
-io-m2dir.git = "https://github.com/pimalaya/io-m2dir"
-io-maildir.git = "https://github.com/pimalaya/io-maildir"
-io-smtp.git = "https://github.com/pimalaya/io-smtp"
-pimalaya-stream.git = "https://github.com/pimalaya/stream"
+# [patch.crates-io] # remote git
+# io-http.git = "https://github.com/pimalaya/io-http"
+# io-imap.git = "https://github.com/pimalaya/io-imap"
+# io-jmap.git = "https://github.com/pimalaya/io-jmap"
+# io-m2dir.git = "https://github.com/pimalaya/io-m2dir"
+# io-maildir.git = "https://github.com/pimalaya/io-maildir"
+# io-smtp.git = "https://github.com/pimalaya/io-smtp"
+# pimalaya-stream.git = "https://github.com/pimalaya/stream"

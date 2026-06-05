@@ -13,8 +13,8 @@ use io_imap::{
     coroutine::{ImapCoroutine, ImapCoroutineState, ImapYield},
     rfc3501::{
         expunge::{ImapMailboxExpunge, ImapMailboxExpungeError},
-        select::{ImapMailboxSelect, ImapMailboxSelectError},
-        store::{ImapMessageStore, ImapMessageStoreError},
+        select::{ImapMailboxSelect, ImapMailboxSelectError, ImapMailboxSelectOptions},
+        store::{ImapMessageStore, ImapMessageStoreError, ImapMessageStoreOptions},
     },
     types::flag::StoreType,
 };
@@ -71,10 +71,15 @@ impl ImapMessageDelete {
         let mbox = parse_mailbox(mailbox)?;
         let sequence_set = parse_uids(&[id])?;
         let imap_flags = vec![flag_from(&Flag::from_iana(IanaFlag::Deleted))];
-        let store = ImapMessageStore::new(sequence_set, StoreType::Add, imap_flags, true);
+        let store = ImapMessageStore::new(
+            sequence_set,
+            StoreType::Add,
+            imap_flags,
+            ImapMessageStoreOptions { uid: true },
+        );
         let state = if auto_select {
             State::Selecting {
-                select: ImapMailboxSelect::new(mbox),
+                select: ImapMailboxSelect::new(mbox, ImapMailboxSelectOptions::default()),
                 store,
             }
         } else {

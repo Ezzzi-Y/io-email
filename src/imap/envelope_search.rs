@@ -28,10 +28,10 @@ use io_imap::{
     codec::fragmentizer::Fragmentizer,
     coroutine::{ImapCoroutine, ImapCoroutineState, ImapYield},
     rfc3501::{
-        fetch::{ImapMessageFetch, ImapMessageFetchError},
-        select::{ImapMailboxSelect, ImapMailboxSelectError},
+        fetch::{ImapMessageFetch, ImapMessageFetchError, ImapMessageFetchOptions},
+        select::{ImapMailboxSelect, ImapMailboxSelectError, ImapMailboxSelectOptions},
     },
-    rfc5256::sort::{ImapMailboxSort, ImapMailboxSortError},
+    rfc5256::sort::{ImapMailboxSort, ImapMailboxSortError, ImapMailboxSortOptions},
     types::{
         core::{AString, Atom, Vec1},
         datetime::NaiveDate as ImapNaiveDate,
@@ -111,7 +111,7 @@ impl ImapEnvelopeSearch {
 
         Ok(Self {
             state: State::Selecting {
-                select: ImapMailboxSelect::new(mbox),
+                select: ImapMailboxSelect::new(mbox, ImapMailboxSelectOptions::default()),
                 page,
                 page_size,
                 item_names,
@@ -326,7 +326,11 @@ impl ImapCoroutine for ImapEnvelopeSearch {
                         if data.exists.unwrap_or(0) == 0 {
                             return ImapCoroutineState::Complete(Ok(Vec::new()));
                         }
-                        let sort = ImapMailboxSort::new(sort_criteria, search_criteria, true);
+                        let sort = ImapMailboxSort::new(
+                            sort_criteria,
+                            search_criteria,
+                            ImapMailboxSortOptions { uid: true },
+                        );
                         self.state = State::Sorting {
                             sort,
                             page,
@@ -375,7 +379,14 @@ impl ImapCoroutine for ImapEnvelopeSearch {
                             }
                         };
                         self.state = State::Fetching {
-                            fetch: ImapMessageFetch::new(sequence_set, item_names, true),
+                            fetch: ImapMessageFetch::new(
+                                sequence_set,
+                                item_names,
+                                ImapMessageFetchOptions {
+                                    uid: true,
+                                    ..Default::default()
+                                },
+                            ),
                             order: page_uids,
                         };
                     }

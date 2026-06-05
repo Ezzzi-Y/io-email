@@ -18,7 +18,7 @@
 //! reuses that buffer to scan plain-text and HTML body parts via
 //! [`mail_parser::MessageParser`]. No extra round-trip is needed.
 //!
-//! [`MaildirMessagesList`]: io_maildir::coroutines::message_list::MaildirMessagesList
+//! [`MaildirEntryList`]: io_maildir::entry::list::MaildirEntryList
 
 use alloc::{
     collections::BTreeSet,
@@ -26,18 +26,17 @@ use alloc::{
     vec::Vec,
 };
 use core::{cmp::Ordering, mem};
-use std::path::PathBuf;
 
 use chrono::{DateTime, FixedOffset, NaiveDate};
 use io_maildir::{
     coroutine::*,
-    coroutines::message_list::{
-        MaildirMessagesList as InnerList, MaildirMessagesListError as InnerErr,
+    entry::{
+        list::{MaildirEntryList as InnerList, MaildirEntryListError as InnerErr},
+        types::{MaildirEntry, MaildirFullEntry},
     },
-    entry::MaildirEntry,
-    maildir::Maildir,
-    message::MaildirMessage,
-    path::MaildirPath,
+    maildir::types::Maildir,
+    path::FsPath,
+    store::MaildirStore,
 };
 use log::trace;
 use mail_parser::{Address as MailParserAddress, MessageParser};
@@ -47,7 +46,7 @@ use crate::{
     address::Address,
     envelope::{Envelope, normalize_message_id},
     flag::Flag,
-    maildir::convert::{InvalidMailboxName, flag_from_char, paginate, resolve_mailbox},
+    maildir::convert::{InvalidMailboxName, flag_from_char, mailbox_path, paginate},
     search::{
         filter::query::SearchEmailsFilterQuery,
         query::SearchEmailsQuery,
@@ -82,16 +81,15 @@ pub struct MaildirEnvelopeSearch {
 
 impl MaildirEnvelopeSearch {
     pub fn new(
-        root: impl Into<PathBuf>,
-        maildir_plus: bool,
+        store: &MaildirStore,
         mailbox: &str,
         query: Option<&SearchEmailsQuery>,
         page: Option<u32>,
         page_size: Option<u32>,
     ) -> Result<Self, MaildirEnvelopeSearchError> {
         trace!("prepare Maildir envelope search");
-        let path = resolve_mailbox(&root.into(), maildir_plus, mailbox)?;
-        let maildir = Maildir::from_path(path);
+        let path = mailbox_path(mailbox)?;
+        let maildir = Maildir::from_path(store.resolve(&path));
         Ok(Self {
             state: State::Listing(InnerList::new(maildir)),
             filter: query.and_then(|q| q.filter.clone()),
@@ -120,7 +118,7 @@ impl MaildirCoroutine for MaildirEnvelopeSearch {
                     if entries.is_empty() {
                         return MaildirCoroutineState::Complete(Ok(Vec::new()));
                     }
-                    let paths: BTreeSet<MaildirPath> =
+                    let paths: BTreeSet<FsPath> =
                         entries.iter().map(|e| e.path().clone()).collect();
                     self.state = State::Reading(entries);
                     MaildirCoroutineState::Yielded(MaildirYield::WantsFileRead(paths))
@@ -176,12 +174,12 @@ enum State {
 
 /// Builds an [`Envelope`] from a Maildir file: filename letters for
 /// flags, RFC 5322 headers via mail-parser.
-fn envelope_from_bytes(path: &MaildirPath, bytes: &[u8]) -> Envelope {
-    let message = MaildirMessage::from((path.clone(), bytes.to_vec()));
-    let id = message.id().unwrap_or_default().to_string();
-    let flags = parse_filename_flags(message.path());
-    let size = message.contents().len() as u64;
-    let parsed = message.parsed();
+fn envelope_from_bytes(path: &FsPath, bytes: &[u8]) -> Envelope {
+    let entry = MaildirFullEntry::from((path.clone(), bytes.to_vec()));
+    let id = entry.id().unwrap_or_default().to_string();
+    let flags = parse_filename_flags(entry.path());
+    let size = entry.contents().len() as u64;
+    let parsed = entry.parsed();
 
     let subject = parsed
         .as_ref()
@@ -226,7 +224,7 @@ fn envelope_from_bytes(path: &MaildirPath, bytes: &[u8]) -> Envelope {
     }
 }
 
-fn parse_filename_flags(path: &MaildirPath) -> BTreeSet<Flag> {
+fn parse_filename_flags(path: &FsPath) -> BTreeSet<Flag> {
     let Some(name) = path.file_name() else {
         return BTreeSet::new();
     };

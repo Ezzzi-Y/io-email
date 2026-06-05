@@ -10,7 +10,7 @@
 //!
 //! Sorting is by `Date:` header descending; pagination is 1-indexed.
 //!
-//! [`M2dirMessageList`]: io_m2dir::coroutines::message_list::M2dirMessageList
+//! [`M2dirEntryList`]: io_m2dir::entry::list::M2dirEntryList
 
 use alloc::{collections::BTreeSet, vec::Vec};
 use core::mem;
@@ -18,10 +18,15 @@ use std::path::PathBuf;
 
 use io_m2dir::{
     coroutine::*,
-    coroutines::message_list::{M2dirMessageList as InnerList, M2dirMessageListError as InnerErr},
-    entry::M2dirEntry,
-    flag::M2dirFlags,
-    m2dir::M2dir,
+    entry::{
+        list::{
+            M2dirEntryList as InnerList, M2dirEntryListError as InnerErr,
+            M2dirEntryListOptions as InnerOpts,
+        },
+        types::M2dirEntry,
+    },
+    flag::types::M2dirFlags,
+    m2dir::types::M2dir,
     path::M2dirPath,
 };
 use log::trace;
@@ -68,7 +73,7 @@ impl M2dirEnvelopeList {
     ) -> Result<Self, M2dirEnvelopeListError> {
         trace!("prepare m2dir envelope listing");
         let m2dir = resolve_mailbox(root, mailbox)?;
-        let inner = InnerList::new(m2dir.clone());
+        let inner = InnerList::new(m2dir.clone(), InnerOpts::default());
         Ok(Self {
             state: State::Listing(inner),
             m2dir,

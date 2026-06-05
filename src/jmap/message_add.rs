@@ -12,13 +12,16 @@ use core::mem;
 use io_jmap::{
     coroutine::{JmapCoroutine, JmapCoroutineState, JmapYield},
     rfc8620::{
+        JmapSession,
         blob_upload::{JmapBlobUpload, JmapBlobUploadError, JmapBlobUploadOutput},
-        redirect::JmapRedirectYield,
-        session::JmapSession,
+        coroutine::JmapRedirectYield,
     },
     rfc8621::{
-        email::EmailImport,
-        email_import::{JmapEmailImport as InnerImport, JmapEmailImportError as ImportErr},
+        MAIL_CAPABILITY,
+        email::{
+            JmapEmailImportArgs,
+            import::{JmapEmailImport as InnerImport, JmapEmailImportError as ImportErr},
+        },
     },
 };
 use log::trace;
@@ -111,7 +114,7 @@ impl JmapCoroutine for JmapMessageAdd {
                     let mut imports = BTreeMap::new();
                     imports.insert(
                         client_id.clone(),
-                        EmailImport {
+                        JmapEmailImportArgs {
                             blob_id,
                             mailbox_ids,
                             keywords: if self.keywords.is_empty() {
@@ -161,7 +164,7 @@ impl JmapCoroutine for JmapMessageAdd {
 fn resolve_upload_url(session: &JmapSession) -> Result<Url, JmapMessageAddError> {
     let account_id = session
         .primary_accounts
-        .get(io_jmap::rfc8621::capabilities::MAIL)
+        .get(MAIL_CAPABILITY)
         .cloned()
         .unwrap_or_default();
     let url_str = session.upload_url.replace("{accountId}", &account_id);

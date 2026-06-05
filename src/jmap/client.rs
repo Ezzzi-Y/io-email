@@ -13,8 +13,8 @@
 //! shared API does not cover.
 //!
 //! [`JmapClientStd`]: io_jmap::client::JmapClientStd
-//! [`JmapSession`]: io_jmap::rfc8620::session::JmapSession
-//! [`JmapSession::capabilities`]: io_jmap::rfc8620::session::JmapSession::capabilities
+//! [`JmapSession`]: io_jmap::rfc8620::JmapSession
+//! [`JmapSession::capabilities`]: io_jmap::rfc8620::JmapSession::capabilities
 
 use alloc::{string::String, sync::Arc, vec::Vec};
 use core::sync::atomic::AtomicBool;
@@ -26,8 +26,14 @@ use std::{
 use io_jmap::{
     client::{JmapClientStd as InnerJmapClientStd, JmapClientStdError as InnerJmapClientStdError},
     coroutine::*,
-    rfc8620::{changes::JmapChangesError, error::JmapMethodError},
-    rfc8621::mailbox_changes::JmapMailboxChangesError,
+    rfc8620::{JmapMethodError, JmapSession, changes::JmapChangesError},
+    rfc8621::{
+        email::{changes::JmapEmailChangesOptions, get::JmapEmailGetOptions},
+        mailbox::{
+            changes::{JmapMailboxChangesError, JmapMailboxChangesOptions},
+            get::JmapMailboxGetOptions,
+        },
+    },
 };
 #[cfg(any(
     feature = "rustls-ring",
@@ -115,10 +121,10 @@ const READ_BUFFER_SIZE: usize = 16 * 1024;
 /// and no separate capability list (capabilities are exposed via the
 /// inner client's cached [`JmapSession`]).
 ///
-/// Two extra knobs are required for [`Self::send_message`]: the JMAP
-/// identity to submit under (`Identity/get` `type=role:identity`) and
-/// the drafts mailbox id (`Mailbox/query` `role: drafts`). Populate
-/// them after [`Self::session_get`] when sending is in scope.
+/// Two extra options are required for [`Self::send_message`]: the
+/// JMAP identity to submit under (`Identity/get` `type=role:identity`)
+/// and the drafts mailbox id (`Mailbox/query` `role: drafts`).
+/// Populate them after [`Self::session_get`] when sending is in scope.
 pub struct JmapClientStd {
     pub inner: InnerJmapClientStd,
     pub identity_id: Option<String>,
@@ -427,7 +433,10 @@ impl JmapClientStd {
         let mut cursor = since_state;
 
         loop {
-            let changes = match self.inner.email_changes(cursor.clone(), None) {
+            let changes = match self
+                .inner
+                .email_changes(cursor.clone(), JmapEmailChangesOptions::default())
+            {
                 Ok(c) => c,
                 Err(err) if envelope_diff::is_cannot_calculate_changes(&err) => {
                     return self.diff_baseline();
@@ -450,18 +459,22 @@ impl JmapClientStd {
         let new_envelopes = if created_ids.is_empty() {
             Vec::new()
         } else {
-            let output =
-                self.inner
-                    .email_get(created_ids, Some(properties.clone()), false, false, 0)?;
+            let opts = JmapEmailGetOptions {
+                properties: Some(properties.clone()),
+                ..Default::default()
+            };
+            let output = self.inner.email_get(created_ids, opts)?;
             output.emails.into_iter().map(envelope_from).collect()
         };
 
         let flag_updates = if updated_ids.is_empty() {
             Vec::new()
         } else {
-            let output = self
-                .inner
-                .email_get(updated_ids, Some(properties), false, false, 0)?;
+            let opts = JmapEmailGetOptions {
+                properties: Some(properties),
+                ..Default::default()
+            };
+            let output = self.inner.email_get(updated_ids, opts)?;
             output
                 .emails
                 .into_iter()
@@ -489,13 +502,20 @@ impl JmapClientStd {
     /// caller is told to re-list via `Changed { new_state: None }`.
     pub fn diff_mailboxes(&mut self, state: Option<&[u8]>) -> Result<MailboxDiff, JmapClientError> {
         let Some(since_state) = state.and_then(envelope_diff::decode) else {
-            let output = self.inner.mailbox_get(Some(Vec::new()), None)?;
+            let opts = JmapMailboxGetOptions {
+                ids: Some(Vec::new()),
+                ..Default::default()
+            };
+            let output = self.inner.mailbox_get(opts)?;
             return Ok(MailboxDiff::Changed {
                 new_state: Some(envelope_diff::encode(&output.new_state)),
             });
         };
 
-        match self.inner.mailbox_changes(since_state, None) {
+        match self
+            .inner
+            .mailbox_changes(since_state, JmapMailboxChangesOptions::default())
+        {
             Ok(changes)
                 if !changes.has_more_changes
                     && changes.created.is_empty()
@@ -520,13 +540,15 @@ impl JmapClientStd {
     /// `Email/get`. Used on first sync, when the cached state is
     /// unusable, or when the server returns `cannotCalculateChanges`.
     fn diff_baseline(&mut self) -> Result<EnvelopeDiff, JmapClientError> {
-        let output = self.inner.email_get(Vec::new(), None, false, false, 0)?;
+        let output = self
+            .inner
+            .email_get(Vec::new(), JmapEmailGetOptions::default())?;
         Ok(EnvelopeDiff::FullListRequired {
             new_state: Some(envelope_diff::encode(&output.new_state)),
         })
     }
 
-    fn session_or_err(&self) -> Result<&io_jmap::rfc8620::session::JmapSession, JmapClientError> {
+    fn session_or_err(&self) -> Result<&JmapSession, JmapClientError> {
         self.inner
             .session
             .as_ref()

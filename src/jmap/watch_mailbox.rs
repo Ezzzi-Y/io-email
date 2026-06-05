@@ -3,8 +3,8 @@
 //! Mirrors the IMAP-IDLE pattern over a single HTTP/1.1 connection
 //! by driving the JMAP EventSource in `closeafter=state` mode: each
 //! subscription cycle delivers exactly one
-//! [`StateChange`](io_jmap::rfc8620::event_source::StateChange), the
-//! server closes the chunked response, the TCP socket is released
+//! [`JmapJmapStateChange`](io_jmap::rfc8620::event_source::JmapJmapStateChange),
+//! the server closes the chunked response, the TCP socket is released
 //! (HTTP keep-alive), the coroutine runs the follow-up `Email/changes`
 //! + `Email/get` POSTs on the same connection, diffs the response
 //! against an in-memory shadow, emits one [`WatchEvent`] per delta,
@@ -14,7 +14,7 @@
 //!
 //! ```text
 //! Subscribing (JmapEventSource, closeafter=state)
-//!     ↓ one StateChange + chunked terminator
+//!     ↓ one JmapJmapStateChange + chunked terminator
 //! FetchingChanges (Email/changes since previous Email-type state)
 //!     ↓ created/updated/destroyed ids
 //! FetchingEmails (Email/get on created+updated with envelope + mailboxIds props)
@@ -50,16 +50,17 @@ use core::{
 use io_jmap::{
     coroutine::{JmapCoroutine, JmapCoroutineState, JmapYield},
     rfc8620::{
+        JmapSession,
         changes::JmapChangesOutput,
         event_source::{
-            CloseAfter, JmapEventSource, JmapEventSourceError, JmapEventSourceYield, StateChange,
+            JmapCloseAfter, JmapStateChange,
+            subscribe::{JmapEventSource, JmapEventSourceError, JmapEventSourceYield},
         },
-        session::JmapSession,
     },
-    rfc8621::{
-        email::{Email, EmailProperty},
-        email_changes::{JmapEmailChanges, JmapEmailChangesError},
-        email_get::{JmapEmailGet, JmapEmailGetError},
+    rfc8621::email::{
+        JmapEmail, JmapEmailProperty,
+        changes::{JmapEmailChanges, JmapEmailChangesError, JmapEmailChangesOptions},
+        get::{JmapEmailGet, JmapEmailGetError, JmapEmailGetOptions},
     },
 };
 use log::trace;
@@ -140,7 +141,7 @@ impl JmapWatchMailbox {
             http_auth,
             &[EMAIL_TYPE],
             PING_SECONDS,
-            CloseAfter::State,
+            JmapCloseAfter::State,
             shutdown.clone(),
         )?;
         Ok(Self {
@@ -168,7 +169,7 @@ impl JmapWatchMailbox {
             &self.http_auth,
             &[EMAIL_TYPE],
             PING_SECONDS,
-            CloseAfter::State,
+            JmapCloseAfter::State,
             self.shutdown.clone(),
         )?;
         Ok(State::Subscribing {
@@ -177,12 +178,12 @@ impl JmapWatchMailbox {
         })
     }
 
-    /// Cycle ended: inspect the `StateChange` (if any) and decide
+    /// Cycle ended: inspect the `JmapStateChange` (if any) and decide
     /// whether to issue `Email/changes`, queue a `KeepAlive`, or
     /// resubscribe immediately.
     fn handle_cycle_end(
         &mut self,
-        change: Option<StateChange>,
+        change: Option<JmapStateChange>,
     ) -> Result<State, JmapWatchMailboxError> {
         let observed_state = change
             .as_ref()
@@ -201,7 +202,12 @@ impl JmapWatchMailbox {
 
         if needs_diff {
             let since = self.email_state.clone().unwrap_or_default();
-            let changes = JmapEmailChanges::new(&self.session, &self.http_auth, since, None)?;
+            let changes = JmapEmailChanges::new(
+                &self.session,
+                &self.http_auth,
+                since,
+                JmapEmailChangesOptions::default(),
+            )?;
             return Ok(State::FetchingChanges(changes));
         }
 
@@ -229,17 +235,13 @@ impl JmapWatchMailbox {
 
         created.extend(updated);
         let mut properties = envelope_properties();
-        properties.push(EmailProperty::MailboxIds);
+        properties.push(JmapEmailProperty::MailboxIds);
 
-        let get = JmapEmailGet::new(
-            &self.session,
-            &self.http_auth,
-            created,
-            Some(properties),
-            false,
-            false,
-            0,
-        )?;
+        let opts = JmapEmailGetOptions {
+            properties: Some(properties),
+            ..Default::default()
+        };
+        let get = JmapEmailGet::new(&self.session, &self.http_auth, created, opts)?;
 
         Ok(State::FetchingEmails {
             get,
@@ -251,7 +253,7 @@ impl JmapWatchMailbox {
     /// Folds the freshly-fetched emails + destroyed ids into the
     /// shadow, queueing one [`WatchEvent`] per delta unless the
     /// bootstrap cycle is in progress.
-    fn apply_diff(&mut self, emails: Vec<Email>, destroyed: Vec<String>) {
+    fn apply_diff(&mut self, emails: Vec<JmapEmail>, destroyed: Vec<String>) {
         for email in emails {
             let Some(id) = email.id.clone() else {
                 continue;
@@ -432,7 +434,7 @@ enum State {
     /// Subscribed: one cycle's [`JmapEventSource`] running.
     Subscribing {
         es: JmapEventSource,
-        latest_change: Option<StateChange>,
+        latest_change: Option<JmapStateChange>,
     },
     /// Running `Email/changes` since the last known Email-type
     /// state.

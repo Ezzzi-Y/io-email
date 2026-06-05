@@ -22,9 +22,9 @@ use io_imap::{
     codec::fragmentizer::Fragmentizer,
     coroutine::{ImapCoroutine, ImapCoroutineState, ImapYield},
     rfc3501::{
-        append::{ImapMessageAppend, ImapMessageAppendError},
-        search::{ImapMessageSearch, ImapMessageSearchError},
-        select::{ImapMailboxSelect, ImapMailboxSelectError},
+        append::{ImapMessageAppend, ImapMessageAppendError, ImapMessageAppendOptions},
+        search::{ImapMessageSearch, ImapMessageSearchError, ImapMessageSearchOptions},
+        select::{ImapMailboxSelect, ImapMailboxSelectError, ImapMailboxSelectOptions},
     },
     types::{
         core::{AString, Literal, Vec1},
@@ -110,7 +110,14 @@ impl ImapMessageAdd {
         let literal = Literal::try_from(raw)
             .map_err(|err| ImapMessageAddError::InvalidContent(err.to_string()))?;
         let message = LiteralOrLiteral8::Literal(literal);
-        let append = ImapMessageAppend::new(mbox, imap_flags, None, message);
+        let append = ImapMessageAppend::new(
+            mbox,
+            message,
+            ImapMessageAppendOptions {
+                flags: imap_flags,
+                date: None,
+            },
+        );
 
         Ok(Self {
             state: State::Appending(append),
@@ -152,7 +159,10 @@ impl ImapCoroutine for ImapMessageAdd {
                             Err(err) => return ImapCoroutineState::Complete(Err(err.into())),
                         };
                         self.state = State::SelectingForLookup {
-                            select: ImapMailboxSelect::new(mbox),
+                            select: ImapMailboxSelect::new(
+                                mbox,
+                                ImapMailboxSelectOptions::default(),
+                            ),
                         };
                     }
                     ImapCoroutineState::Complete(Err(err)) => {
@@ -177,7 +187,10 @@ impl ImapCoroutine for ImapMessageAdd {
                                 ));
                             };
                             let criteria = Vec1::from(SearchKey::Header(field, value));
-                            self.state = State::Searching(ImapMessageSearch::new(criteria, true));
+                            self.state = State::Searching(ImapMessageSearch::new(
+                                criteria,
+                                ImapMessageSearchOptions { uid: true },
+                            ));
                         }
                         ImapCoroutineState::Complete(Err(err)) => {
                             return ImapCoroutineState::Complete(Err(err.into()));

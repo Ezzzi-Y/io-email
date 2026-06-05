@@ -1,8 +1,8 @@
 //! m2dir message-get coroutine.
 //!
-//! Wraps [`io_m2dir::coroutines::message_get::M2dirMessageGet`]: walks
-//! the m2dir entry directory until it finds the file whose id matches,
-//! then reads its bytes. The checksum embedded in the filename is
+//! Wraps [`io_m2dir::entry::get::M2dirEntryGet`]: walks the m2dir
+//! entry directory until it finds the file whose id matches, then
+//! reads its bytes. The checksum embedded in the filename is
 //! validated by the inner coroutine before yielding.
 
 use alloc::vec::Vec;
@@ -10,7 +10,10 @@ use std::path::PathBuf;
 
 use io_m2dir::{
     coroutine::*,
-    coroutines::message_get::{M2dirMessageGet as InnerGet, M2dirMessageGetError as InnerErr},
+    entry::get::{
+        M2dirEntryGet as InnerGet, M2dirEntryGetError as InnerErr,
+        M2dirEntryGetOptions as InnerOpts,
+    },
 };
 use log::trace;
 use thiserror::Error;
@@ -40,7 +43,7 @@ impl M2dirMessageGet {
         trace!("prepare m2dir message get");
         let m2dir = resolve_mailbox(root, mailbox)?;
         Ok(Self {
-            inner: InnerGet::new(m2dir, id),
+            inner: InnerGet::new(m2dir, id, InnerOpts::default()),
         })
     }
 }

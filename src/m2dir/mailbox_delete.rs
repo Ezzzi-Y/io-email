@@ -1,14 +1,14 @@
 //! m2dir mailbox-delete coroutine.
 //!
-//! Wraps [`io_m2dir::coroutines::mailbox_delete::M2dirMailboxDelete`]:
-//! recursively removes the on-disk directory for the named mailbox.
+//! Wraps [`io_m2dir::m2dir::delete::M2dirDelete`]: recursively removes
+//! the on-disk directory for the named mailbox.
 
 use std::path::PathBuf;
 
 use io_m2dir::{
     coroutine::*,
-    coroutines::mailbox_delete::{
-        M2dirMailboxDelete as InnerDelete, M2dirMailboxDeleteError as InnerErr,
+    m2dir::delete::{
+        M2dirDelete as InnerDelete, M2dirDeleteError as InnerErr, M2dirDeleteOptions as InnerOpts,
     },
 };
 use log::trace;
@@ -35,7 +35,7 @@ impl M2dirMailboxDelete {
         trace!("prepare m2dir mailbox delete");
         let m2dir = resolve_mailbox(root, name)?;
         Ok(Self {
-            inner: InnerDelete::new(m2dir.path().clone()),
+            inner: InnerDelete::new(m2dir.path().clone(), InnerOpts::default()),
         })
     }
 }

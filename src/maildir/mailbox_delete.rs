@@ -1,21 +1,19 @@
 //! Maildir mailbox-delete coroutine.
 //!
-//! Wraps [`io_maildir::coroutines::maildir_delete::MaildirDelete`]:
-//! recursively removes the on-disk directory for the named mailbox.
-
-use std::path::PathBuf;
+//! Wraps [`io_maildir::maildir::delete::MaildirDelete`]: recursively
+//! removes the on-disk directory for the named mailbox.
 
 use io_maildir::{
     coroutine::*,
-    coroutines::maildir_delete::{
+    maildir::delete::{
         MaildirDelete as InnerMaildirDelete, MaildirDeleteError as InnerMaildirDeleteError,
     },
-    path::MaildirPath,
+    store::MaildirStore,
 };
 use log::trace;
 use thiserror::Error;
 
-use crate::maildir::convert::{InvalidMailboxName, resolve_mailbox};
+use crate::maildir::convert::{InvalidMailboxName, mailbox_path};
 
 /// Errors produced by [`MaildirMailboxDelete`].
 #[derive(Debug, Error)]
@@ -27,22 +25,17 @@ pub enum MaildirMailboxDeleteError {
 }
 
 /// I/O-free coroutine deleting a Maildir mailbox under the configured
-/// root.
+/// store.
 pub struct MaildirMailboxDelete {
     inner: InnerMaildirDelete,
 }
 
 impl MaildirMailboxDelete {
-    pub fn new(
-        root: impl Into<PathBuf>,
-        maildir_plus: bool,
-        name: &str,
-    ) -> Result<Self, MaildirMailboxDeleteError> {
+    pub fn new(store: &MaildirStore, name: &str) -> Result<Self, MaildirMailboxDeleteError> {
         trace!("prepare Maildir mailbox delete");
-        let path = resolve_mailbox(&root.into(), maildir_plus, name)?;
-        let path: MaildirPath = path.into();
+        let path = mailbox_path(name)?;
         Ok(Self {
-            inner: InnerMaildirDelete::new(path),
+            inner: InnerMaildirDelete::new(store, path),
         })
     }
 }
