@@ -12,6 +12,7 @@ pub mod address;
     feature = "imap",
     feature = "jmap",
     feature = "gmail",
+    feature = "msgraph",
     feature = "maildir",
     feature = "m2dir",
     feature = "smtp"
@@ -34,5 +35,7 @@ pub mod jmap;
 pub mod m2dir;
 #[cfg(feature = "maildir")]
 pub mod maildir;
+#[cfg(feature = "msgraph")]
+pub mod msgraph;
 #[cfg(feature = "smtp")]
 pub mod smtp;

@@ -4,7 +4,7 @@ Email client library, written in Rust.
 
 This library is composed of 2 feature-gated layers:
 
-- Low-level **I/O-free** coroutines: these `no_std`-compatible state machines wrap the underlying [io-imap], [io-jmap], [io-maildir], [io-m2dir] and [io-smtp] coroutines and surface a shared least-common-denominator type on completion
+- Low-level **I/O-free** coroutines: these `no_std`-compatible state machines wrap the underlying [io-imap], [io-jmap], [io-gmail], [io-msgraph], [io-maildir], [io-m2dir] and [io-smtp] coroutines and surface a shared least-common-denominator type on completion
 - Mid-level **std client**: a standard, blocking unified client that dispatches the shared API across every registered backend
 
 ## Table of contents
@@ -22,9 +22,9 @@ This library is composed of 2 feature-gated layers:
 
 ## Features
 
-- **Shared LCD types**: `Mailbox`, `Envelope`, `Address`, `Flag` that fit IMAP, JMAP, Maildir, m2dir and SMTP.
+- **Shared LCD types**: `Mailbox`, `Envelope`, `Address`, `Flag` that fit IMAP, JMAP, Gmail, Microsoft Graph, Maildir, m2dir and SMTP.
 - **I/O-free** coroutines: `no_std` state machines per (backend, operation), wrapping the underlying io-* coroutine and producing a shared type on completion.
-- **Unified std client** (`client` feature): blocking dispatcher that routes shared-API calls to the highest-priority registered backend (Maildir → m2dir → JMAP → IMAP for storage, JMAP → SMTP for send).
+- **Unified std client** (`client` feature): blocking dispatcher that routes shared-API calls to the highest-priority registered backend (Maildir → m2dir → JMAP → Gmail → Microsoft Graph → IMAP for storage, JMAP → Gmail → Microsoft Graph → SMTP for send).
 - **TLS** for the network backends (gated by the same `rustls-ring` / `rustls-aws` / `native-tls` features as the underlying io-* crates).
 - Optional **search DSL** (`search` feature) and **serde** round-trip on every shared type (`serde` feature).
 
@@ -33,35 +33,37 @@ This library is composed of 2 feature-gated layers:
 
 [io-imap]: https://github.com/pimalaya/io-imap
 [io-jmap]: https://github.com/pimalaya/io-jmap
+[io-gmail]: https://github.com/pimalaya/io-gmail
+[io-msgraph]: https://github.com/pimalaya/io-msgraph
 [io-maildir]: https://github.com/pimalaya/io-maildir
 [io-m2dir]: https://github.com/pimalaya/io-m2dir
 [io-smtp]: https://github.com/pimalaya/io-smtp
 
 ## Backend coverage
 
-| Operation                              | IMAP | JMAP | Maildir | m2dir | SMTP |
-|----------------------------------------|:----:|:----:|:-------:|:-----:|:----:|
-| `list_mailboxes`                       |  yes |  yes |   yes   |  yes  |      |
-| `create_mailbox`                       |  yes |  yes |   yes   |  yes  |      |
-| `delete_mailbox`                       |  yes |  yes |   yes   |  yes  |      |
-| `diff_mailboxes`                       |      |  yes |         |       |      |
-| `list_envelopes`                       |  yes |  yes |   yes   |  yes  |      |
-| `search_envelopes` (feature `search`)  |  yes |  yes |   yes   |  yes  |      |
-| `diff_envelopes`                       |  yes |  yes |         |       |      |
-| `watch_mailbox`                        |  yes |  yes |         |       |      |
-| `get_message`                          |  yes |  yes |   yes   |  yes  |      |
-| `add_message`                          |  yes |  yes |   yes   |  yes  |      |
-| `copy_messages`                        |  yes |  yes |   yes   |  yes  |      |
-| `move_messages`                        |  yes |  yes |   yes   |  yes  |      |
-| `delete_message`                       |  yes |  yes |   yes   |  yes  |      |
-| `store_flags`                          |  yes |  yes |   yes   |  yes  |      |
-| `send_message`                         |      |  yes |         |       |  yes |
+| Operation                              | IMAP | JMAP | Gmail | Graph | Maildir | m2dir | SMTP |
+|----------------------------------------|:----:|:----:|:-----:|:-----:|:-------:|:-----:|:----:|
+| `list_mailboxes`                       |  yes |  yes |  yes  |  yes  |   yes   |  yes  |      |
+| `create_mailbox`                       |  yes |  yes |  yes  |  yes  |   yes   |  yes  |      |
+| `delete_mailbox`                       |  yes |  yes |  yes  |  yes  |   yes   |  yes  |      |
+| `diff_mailboxes`                       |      |  yes |       |       |         |       |      |
+| `list_envelopes`                       |  yes |  yes |  yes  |  yes  |   yes   |  yes  |      |
+| `search_envelopes` (feature `search`)  |  yes |  yes |       |       |   yes   |  yes  |      |
+| `diff_envelopes`                       |  yes |  yes |       |       |         |       |      |
+| `watch_mailbox`                        |  yes |  yes |  yes  |       |         |       |      |
+| `get_message`                          |  yes |  yes |  yes  |  yes  |   yes   |  yes  |      |
+| `add_message`                          |  yes |  yes |       |       |   yes   |  yes  |      |
+| `copy_messages`                        |  yes |  yes |  yes  |  yes  |   yes   |  yes  |      |
+| `move_messages`                        |  yes |  yes |  yes  |  yes  |   yes   |  yes  |      |
+| `delete_message`                       |  yes |  yes |  yes  |  yes  |   yes   |  yes  |      |
+| `store_flags`                          |  yes |  yes |  yes  |  yes  |   yes   |  yes  |      |
+| `send_message`                         |      |  yes |  yes  |  yes  |         |       |  yes |
 
 ## Usage
 
 I/O Email can be consumed two ways, depending on how much of the I/O stack you want to own. Each mode is gated by cargo features.
 
-Whichever mode you pick, every shared-API coroutine implements the backend trait of the protocol it targets (`ImapCoroutine`, `JmapCoroutine`, `MaildirCoroutine`, `M2dirCoroutine`, `SmtpCoroutine`). The `resume(...)` method returns the matching `<Backend>CoroutineState<Yield, Return>` with two variants:
+Whichever mode you pick, every shared-API coroutine implements the backend trait of the protocol it targets (`ImapCoroutine`, `JmapCoroutine`, `GmailCoroutine`, `MsgraphCoroutine`, `MaildirCoroutine`, `M2dirCoroutine`, `SmtpCoroutine`). The `resume(...)` method returns the matching `<Backend>CoroutineState<Yield, Return>` with two variants:
 
 - `Yielded(Y)`: intermediate. `Y` is the backend's standard `<Backend>Yield` (`WantsRead` / `WantsWrite` for the network backends, `WantsDirRead` / `WantsFileCreate` / `WantsRename` etc. for the filesystem ones), plus a dedicated `Event(WatchEvent)` variant on watch coroutines.
 - `Complete(R)`: terminal. By convention `R = Result<Output, Error>` carrying the operation's final value typed against the shared `Mailbox` / `Envelope` / shared payload.
@@ -140,7 +142,7 @@ for mbox in client.list_mailboxes(/* with_counts */ true).unwrap() {
 }
 ```
 
-Dispatch priority on storage reads walks the registered backends `Maildir → m2dir → JMAP → IMAP` (local before network, cheap before expensive); send routes `JMAP → SMTP`. Pick which slots to fill based on the workload (local-first sync vs network-first transactional client).
+Dispatch priority on storage reads walks the registered backends `Maildir → m2dir → JMAP → Gmail → Microsoft Graph → IMAP` (local before network, cheap before expensive); send routes `JMAP → Gmail → Microsoft Graph → SMTP`. Pick which slots to fill based on the workload (local-first sync vs network-first transactional client).
 
 ## Examples
 

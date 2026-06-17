@@ -13,6 +13,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
   Maps Gmail labels onto the shared mailbox API and Gmail system labels onto the shared flags (`\Seen` is the absence of `UNREAD`). Implements `list_mailboxes`, `create_mailbox`, `delete_mailbox`, `list_envelopes`, `store_flags`, `get_message`, `delete_message`, `copy_messages`, `move_messages` and `send_message`; `EmailClientStd` gains `with_gmail` plus the TLS-gated `connect_gmail`. Operations Gmail has no primitive for (message add, search, envelope/mailbox diff, watch) are intentionally left unimplemented.
 
+- Added the Microsoft Graph REST backend (`msgraph` cargo feature) built on the io-msgraph crate.
+
+  Maps Graph mail folders onto the shared mailbox API and Graph message fields onto the shared flags (`\Seen` is `isRead`, `\Flagged` the follow-up flag, `$Important` is `importance = high`, `\Draft` the read-only `isDraft`, custom keywords are `categories`). One coroutine per action under `<domain>/msgraph/`, mirroring the Gmail backend. Implements `list_mailboxes`, `create_mailbox`, `delete_mailbox`, `list_envelopes`, `store_flags`, `get_message`, `delete_message`, `copy_messages`, `move_messages` and `send_message`; `EmailClientStd` gains `with_msgraph` plus the TLS-gated `connect_msgraph`. Operations Graph has no primitive for here (message add, search, envelope/mailbox diff, watch) are intentionally left unimplemented.
+
 ## [0.1.0] - 2026-06-06
 
 ### Added

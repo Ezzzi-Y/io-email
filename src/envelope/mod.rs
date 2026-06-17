@@ -11,3 +11,5 @@ pub mod jmap;
 pub mod m2dir;
 #[cfg(feature = "maildir")]
 pub mod maildir;
+#[cfg(feature = "msgraph")]
+pub mod msgraph;

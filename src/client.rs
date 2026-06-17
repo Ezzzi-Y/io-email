@@ -51,6 +51,8 @@ use crate::jmap::client::{JmapClientError, JmapClientStd};
 use crate::m2dir::client::{M2dirClient, M2dirClientError};
 #[cfg(feature = "maildir")]
 use crate::maildir::client::{MaildirClient, MaildirClientError};
+#[cfg(feature = "msgraph")]
+use crate::msgraph::client::{MsgraphClientError, MsgraphClientStd};
 #[cfg(feature = "search")]
 use crate::search::query::SearchEmailsQuery;
 #[cfg(feature = "smtp")]
@@ -81,6 +83,7 @@ use pimalaya_stream::sasl::Sasl as ImapSasl;
     feature = "imap",
     feature = "jmap",
     feature = "gmail",
+    feature = "msgraph",
     feature = "smtp"
 ))]
 #[cfg(any(
@@ -119,6 +122,9 @@ pub enum EmailClientStdError {
     #[cfg(feature = "gmail")]
     #[error(transparent)]
     Gmail(#[from] GmailClientError),
+    #[cfg(feature = "msgraph")]
+    #[error(transparent)]
+    Msgraph(#[from] MsgraphClientError),
     #[cfg(feature = "smtp")]
     #[error(transparent)]
     Smtp(#[from] SmtpClientError),
@@ -149,6 +155,8 @@ pub struct EmailClientStd {
     pub jmap: Option<JmapClientStd>,
     #[cfg(feature = "gmail")]
     pub gmail: Option<GmailClientStd>,
+    #[cfg(feature = "msgraph")]
+    pub msgraph: Option<MsgraphClientStd>,
     #[cfg(feature = "smtp")]
     pub smtp: Option<SmtpClientStd>,
     #[cfg(feature = "maildir")]
@@ -181,6 +189,13 @@ impl EmailClientStd {
     #[cfg(feature = "gmail")]
     pub fn with_gmail(mut self, client: GmailClientStd) -> Self {
         self.gmail = Some(client);
+        self
+    }
+
+    /// Registers the Microsoft Graph backend.
+    #[cfg(feature = "msgraph")]
+    pub fn with_msgraph(mut self, client: MsgraphClientStd) -> Self {
+        self.msgraph = Some(client);
         self
     }
 
@@ -261,6 +276,25 @@ impl EmailClientStd {
         Ok(self.with_gmail(GmailClientStd::connect(tls, token, user_id)?))
     }
 
+    /// Opens a TLS connection to the Microsoft Graph API via
+    /// [`MsgraphClientStd::connect`] and registers the resulting client.
+    /// `token` is the bare OAuth 2.0 bearer token; `user_id` is the
+    /// mailbox owner (usually `me`).
+    #[cfg(feature = "msgraph")]
+    #[cfg(any(
+        feature = "rustls-ring",
+        feature = "rustls-aws",
+        feature = "native-tls"
+    ))]
+    pub fn connect_msgraph(
+        self,
+        tls: &Tls,
+        token: impl ToString,
+        user_id: impl Into<String>,
+    ) -> Result<Self, EmailClientStdError> {
+        Ok(self.with_msgraph(MsgraphClientStd::connect(tls, token, user_id)?))
+    }
+
     /// Opens an SMTP connection via [`SmtpClientStd::connect`] and
     /// registers the resulting client.
     #[cfg(feature = "smtp")]
@@ -321,6 +355,10 @@ impl EmailClientStd {
         if let Some(c) = self.gmail.as_mut() {
             return Ok(c.list_mailboxes(with_counts)?);
         }
+        #[cfg(feature = "msgraph")]
+        if let Some(c) = self.msgraph.as_mut() {
+            return Ok(c.list_mailboxes(with_counts)?);
+        }
         #[cfg(feature = "imap")]
         if let Some(c) = self.imap.as_mut() {
             return Ok(c.list_mailboxes(with_counts)?);
@@ -352,6 +390,10 @@ impl EmailClientStd {
         }
         #[cfg(feature = "gmail")]
         if let Some(c) = self.gmail.as_mut() {
+            return Ok(c.list_envelopes(mailbox, page, page_size)?);
+        }
+        #[cfg(feature = "msgraph")]
+        if let Some(c) = self.msgraph.as_mut() {
             return Ok(c.list_envelopes(mailbox, page, page_size)?);
         }
         #[cfg(feature = "imap")]
@@ -416,6 +458,10 @@ impl EmailClientStd {
         if let Some(c) = self.gmail.as_mut() {
             return Ok(c.store_flags(mailbox, ids, flags, op)?);
         }
+        #[cfg(feature = "msgraph")]
+        if let Some(c) = self.msgraph.as_mut() {
+            return Ok(c.store_flags(mailbox, ids, flags, op)?);
+        }
         #[cfg(feature = "imap")]
         if let Some(c) = self.imap.as_mut() {
             return Ok(c.store_flags(mailbox, ids, flags, op)?);
@@ -440,6 +486,10 @@ impl EmailClientStd {
         }
         #[cfg(feature = "gmail")]
         if let Some(c) = self.gmail.as_mut() {
+            return Ok(c.get_message(mailbox, id)?);
+        }
+        #[cfg(feature = "msgraph")]
+        if let Some(c) = self.msgraph.as_mut() {
             return Ok(c.get_message(mailbox, id)?);
         }
         #[cfg(feature = "imap")]
@@ -496,6 +546,10 @@ impl EmailClientStd {
         if let Some(c) = self.gmail.as_mut() {
             return Ok(c.create_mailbox(name)?);
         }
+        #[cfg(feature = "msgraph")]
+        if let Some(c) = self.msgraph.as_mut() {
+            return Ok(c.create_mailbox(name)?);
+        }
         #[cfg(feature = "imap")]
         if let Some(c) = self.imap.as_mut() {
             return Ok(c.create_mailbox(name)?);
@@ -522,6 +576,10 @@ impl EmailClientStd {
         if let Some(c) = self.gmail.as_mut() {
             return Ok(c.delete_mailbox(name)?);
         }
+        #[cfg(feature = "msgraph")]
+        if let Some(c) = self.msgraph.as_mut() {
+            return Ok(c.delete_mailbox(name)?);
+        }
         #[cfg(feature = "imap")]
         if let Some(c) = self.imap.as_mut() {
             return Ok(c.delete_mailbox(name)?);
@@ -546,6 +604,10 @@ impl EmailClientStd {
         }
         #[cfg(feature = "gmail")]
         if let Some(c) = self.gmail.as_mut() {
+            return Ok(c.delete_message(mailbox, id)?);
+        }
+        #[cfg(feature = "msgraph")]
+        if let Some(c) = self.msgraph.as_mut() {
             return Ok(c.delete_message(mailbox, id)?);
         }
         #[cfg(feature = "imap")]
@@ -579,6 +641,10 @@ impl EmailClientStd {
         if let Some(c) = self.gmail.as_mut() {
             return Ok(c.copy_messages(from, to, ids)?);
         }
+        #[cfg(feature = "msgraph")]
+        if let Some(c) = self.msgraph.as_mut() {
+            return Ok(c.copy_messages(from, to, ids)?);
+        }
         #[cfg(feature = "imap")]
         if let Some(c) = self.imap.as_mut() {
             return Ok(c.copy_messages(from, to, ids)?);
@@ -608,6 +674,10 @@ impl EmailClientStd {
         }
         #[cfg(feature = "gmail")]
         if let Some(c) = self.gmail.as_mut() {
+            return Ok(c.move_messages(from, to, ids)?);
+        }
+        #[cfg(feature = "msgraph")]
+        if let Some(c) = self.msgraph.as_mut() {
             return Ok(c.move_messages(from, to, ids)?);
         }
         #[cfg(feature = "imap")]
@@ -694,7 +764,12 @@ impl EmailClientStd {
 
     /// Sends a raw RFC 5322 message. JMAP routes via `EmailSubmission/set` when
     /// registered; otherwise SMTP runs the RFC 5321 mail transaction.
-    #[cfg(any(feature = "jmap", feature = "gmail", feature = "smtp"))]
+    #[cfg(any(
+        feature = "jmap",
+        feature = "gmail",
+        feature = "msgraph",
+        feature = "smtp"
+    ))]
     pub fn send_message(&mut self, raw: Vec<u8>) -> Result<(), EmailClientStdError> {
         #[cfg(feature = "jmap")]
         if let Some(c) = self.jmap.as_mut() {
@@ -702,6 +777,10 @@ impl EmailClientStd {
         }
         #[cfg(feature = "gmail")]
         if let Some(c) = self.gmail.as_mut() {
+            return Ok(c.send_message(raw)?);
+        }
+        #[cfg(feature = "msgraph")]
+        if let Some(c) = self.msgraph.as_mut() {
             return Ok(c.send_message(raw)?);
         }
         #[cfg(feature = "smtp")]

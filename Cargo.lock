@@ -660,6 +660,7 @@ dependencies = [
  "io-jmap",
  "io-m2dir",
  "io-maildir",
+ "io-msgraph",
  "io-smtp",
  "log",
  "mail-parser",
@@ -678,7 +679,7 @@ dependencies = [
 [[package]]
 name = "io-gmail"
 version = "0.0.1"
-source = "git+https://github.com/pimalaya/io-gmail#72c536dfa56103a4298bd7d052544e0c20a5d2db"
+source = "git+https://github.com/pimalaya/io-gmail#cc322e4b484f566e4739fd2c4bf3342f26ec3b21"
 dependencies = [
  "anyhow",
  "base64",
@@ -761,6 +762,23 @@ dependencies = [
  "log",
  "mail-parser",
  "thiserror",
+]
+
+[[package]]
+name = "io-msgraph"
+version = "0.0.1"
+source = "git+https://github.com/pimalaya/io-msgraph#d438fc3957e4c3f145e99454e5064951f798233d"
+dependencies = [
+ "anyhow",
+ "base64",
+ "io-http",
+ "log",
+ "pimalaya-stream",
+ "serde",
+ "serde_json",
+ "serde_variant",
+ "thiserror",
+ "url",
 ]
 
 [[package]]
@@ -1882,9 +1900,9 @@ dependencies = [
 
 [[package]]
 name = "webpki-root-certs"
-version = "1.0.7"
+version = "1.0.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f31141ce3fc3e300ae89b78c0dd67f9708061d1d2eda54b8209346fd6be9a92c"
+checksum = "0d46a5a140e6f7afeccd8eae97eff335163939eac8b929834875168b29b3d267"
 dependencies = [
  "rustls-pki-types",
 ]
