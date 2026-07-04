@@ -150,6 +150,7 @@ pub(crate) fn compute_window(
 pub(crate) fn envelope_from(seq: u32, items: Vec<MessageDataItem<'static>>) -> Envelope {
     let mut id = String::new();
     let mut message_id: Option<String> = None;
+    let mut in_reply_to: Option<String> = None;
     let mut flags = BTreeSet::new();
     let mut subject = String::new();
     let mut from = Vec::new();
@@ -178,6 +179,10 @@ pub(crate) fn envelope_from(seq: u32, items: Vec<MessageDataItem<'static>>) -> E
                     let raw = bytes_to_string(m.as_ref());
                     message_id = normalize_message_id(&raw);
                 }
+                if let Some(m) = env.in_reply_to.into_option() {
+                    let raw = bytes_to_string(m.as_ref());
+                    in_reply_to = normalize_message_id(&raw);
+                }
                 from = env.from.iter().map(address_from).collect();
                 to = env.to.iter().map(address_from).collect();
             }
@@ -198,6 +203,7 @@ pub(crate) fn envelope_from(seq: u32, items: Vec<MessageDataItem<'static>>) -> E
     Envelope {
         id,
         message_id,
+        in_reply_to,
         flags,
         subject,
         from,

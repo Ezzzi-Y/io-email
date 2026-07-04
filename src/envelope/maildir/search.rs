@@ -202,9 +202,15 @@ fn envelope_from_bytes(path: &FsPath, bytes: &[u8]) -> Envelope {
         .and_then(|m| m.message_id())
         .and_then(normalize_message_id);
 
+    let in_reply_to = parsed
+        .as_ref()
+        .and_then(|m| m.in_reply_to().as_text())
+        .and_then(normalize_message_id);
+
     Envelope {
         id,
         message_id,
+        in_reply_to,
         flags,
         subject,
         from,
@@ -362,6 +368,7 @@ mod tests {
         Envelope {
             id: String::from("1"),
             message_id: None,
+            in_reply_to: None,
             flags: Default::default(),
             subject: String::from("Release notes"),
             from: vec![Address {

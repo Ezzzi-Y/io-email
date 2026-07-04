@@ -60,6 +60,11 @@ pub struct Envelope {
     #[cfg_attr(feature = "serde", serde(default))]
     pub message_id: Option<String>,
 
+    /// `In-Reply-To:` header value (RFC 5322 §3.6.4), `None` when the
+    /// header is missing or the backend did not surface it.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub in_reply_to: Option<String>,
+
     /// Flags set on the message. Stored as a sorted set since wire
     /// order is not meaningful and duplicates are nonsensical; the
     /// derived `Ord` on `Flag` gives deterministic iteration.

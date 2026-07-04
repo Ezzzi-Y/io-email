@@ -80,9 +80,11 @@ pub fn envelope_from(
         .and_then(|d| DateTime::parse_from_rfc3339(&d.to_rfc3339()).ok());
     let size = parsed.raw_message().len() as u64;
     let message_id = parsed.message_id().and_then(normalize_message_id);
+    let in_reply_to = parsed.in_reply_to().as_text().and_then(normalize_message_id);
     Envelope {
         id,
         message_id,
+        in_reply_to,
         flags,
         subject,
         from,

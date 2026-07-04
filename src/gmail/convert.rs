@@ -148,6 +148,7 @@ pub(crate) fn envelope_from(message: GmailMessage) -> Envelope {
     let mut to = Vec::new();
     let mut date = None;
     let mut message_id = None;
+    let mut in_reply_to = None;
 
     if let Some(payload) = &message.payload {
         subject = payload.header("Subject").unwrap_or_default().to_string();
@@ -155,11 +156,13 @@ pub(crate) fn envelope_from(message: GmailMessage) -> Envelope {
         to = parse_addresses(payload.header("To").unwrap_or_default());
         date = payload.header("Date").and_then(parse_rfc2822);
         message_id = payload.header("Message-ID").and_then(normalize_message_id);
+        in_reply_to = payload.header("In-Reply-To").and_then(normalize_message_id);
     }
 
     Envelope {
         id: message.id,
         message_id,
+        in_reply_to,
         flags,
         subject,
         from,
