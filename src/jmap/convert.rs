@@ -75,6 +75,7 @@ pub(crate) fn envelope_properties() -> Vec<JmapEmailProperty> {
         JmapEmailProperty::Size,
         JmapEmailProperty::HasAttachment,
         JmapEmailProperty::MessageId,
+        JmapEmailProperty::InReplyTo,
     ]
 }
 
@@ -108,9 +109,13 @@ pub(crate) fn envelope_from(email: JmapEmail) -> Envelope {
     let message_id = email
         .message_id
         .and_then(|ids| ids.into_iter().find_map(|s| normalize_message_id(&s)));
+    let in_reply_to = email
+        .in_reply_to
+        .and_then(|ids| ids.into_iter().find_map(|s| normalize_message_id(&s)));
     Envelope {
         id,
         message_id,
+        in_reply_to,
         flags,
         subject,
         from,

@@ -64,6 +64,7 @@ pub(crate) fn envelope_from(message: MsgraphMessage) -> Envelope {
     Envelope {
         id: message.id,
         message_id,
+        in_reply_to: None,
         flags,
         subject: message.subject.unwrap_or_default(),
         from,

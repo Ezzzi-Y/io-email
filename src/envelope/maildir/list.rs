@@ -171,9 +171,15 @@ fn envelope_from_entry(entry: &MaildirFullEntry) -> Envelope {
         .and_then(|m| m.message_id())
         .and_then(normalize_message_id);
 
+    let in_reply_to = parsed
+        .as_ref()
+        .and_then(|m| m.in_reply_to().as_text())
+        .and_then(normalize_message_id);
+
     Envelope {
         id,
         message_id,
+        in_reply_to,
         flags,
         subject,
         from,

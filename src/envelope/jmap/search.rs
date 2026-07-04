@@ -346,6 +346,7 @@ mod tests {
         Envelope {
             id: "1".into(),
             message_id: None,
+            in_reply_to: None,
             flags: Default::default(),
             subject: String::new(),
             from: vec![Address {
